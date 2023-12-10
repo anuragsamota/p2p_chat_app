@@ -41,6 +41,7 @@ function connectToOtherPeer() {
 
 function onMessageReceive(message){
   chatDiv.insertAdjacentHTML("beforeend","<div class='chat chat-start'><div class='chat-bubble chat-bubble-primary'>"+message+"</div></div>")
+  chatDiv.scrollTop = chatDiv.scrollHeight
 }
 
 function sendMessage(){
@@ -51,6 +52,7 @@ function sendMessage(){
       })
       chatDiv.insertAdjacentHTML("beforeend", "<div class='chat chat-end'><div class='chat-bubble chat-bubble-secondary'>" +messageInput.value+"</div></div>")
       messageInput.value = "";
+      chatDiv.scrollTop = chatDiv.scrollHeight
 
     } catch (error) {
       console.log(error)
