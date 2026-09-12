@@ -49,29 +49,38 @@ const AVATAR_COLORS = [
 const Storage = {
     getProfile() {
         try {
-            const data = localStorage.getItem(CONFIG.STORAGE_KEYS.PROFILE);
+            const data = localStorage.getItem('peerwave_user_profile') || localStorage.getItem(CONFIG.STORAGE_KEYS.PROFILE);
             if (data) {
                 const parsed = JSON.parse(data);
-                if (!parsed.userId) {
-                    parsed.userId = 'usr_' + generateUUID();
+                if (parsed && parsed.name) {
+                    if (!parsed.userId) {
+                        parsed.userId = 'usr_' + generateUUID();
+                    }
                     this.saveProfile(parsed);
+                    return parsed;
                 }
-                return parsed;
             }
         } catch (e) {
             console.error('Error reading profile from storage:', e);
         }
-        return {
+        // Fallback to legacy key or default
+        const legacyName = localStorage.getItem('peerwave_username');
+        const defaultProfile = {
             userId: 'usr_' + generateUUID(),
-            name: generateDefaultUsername(),
+            name: legacyName || generateDefaultUsername(),
             avatarColor: getRandomColor(),
             bio: 'Available for P2P messaging',
             createdAt: Date.now()
         };
+        // Immediately persist to localStorage so it never changes on reload
+        this.saveProfile(defaultProfile);
+        return defaultProfile;
     },
     saveProfile(profile) {
         try {
+            localStorage.setItem('peerwave_user_profile', JSON.stringify(profile));
             localStorage.setItem(CONFIG.STORAGE_KEYS.PROFILE, JSON.stringify(profile));
+            localStorage.setItem('peerwave_username', profile.name);
         } catch (e) {
             console.error('Error saving profile to storage:', e);
         }
@@ -184,19 +193,30 @@ Storage.saveSettings(state.settings);
 // 4. DOM Elements
 // ==========================================
 const DOM = {
-    // Navbar
-    connStatusIndicator: document.getElementById('conn-status-indicator'),
-    connStatusText: document.getElementById('conn-status-text'),
-    peerCountText: document.getElementById('peer-count-text'),
-    backupModalBtn: document.getElementById('backup-modal-btn'),
+    // Clean Header (Connected Peer Focus)
+    mobileMenuBtn: document.getElementById('mobile-menu-btn'),
+    headerPeerCard: document.getElementById('header-peer-card'),
+    headerPeerAvatar: document.getElementById('header-peer-avatar'),
+    headerPeerStatusDot: document.getElementById('header-peer-status-dot'),
+    headerPeerName: document.getElementById('header-peer-name'),
+    headerPeerStatusText: document.getElementById('header-peer-status-text'),
+    syncNowHeaderBtn: document.getElementById('sync-now-header-btn'),
+
+    // Dropdown Menu Items
+    menuEditProfileBtn: document.getElementById('menu-edit-profile-btn'),
+    menuBackupBtn: document.getElementById('menu-backup-btn'),
+    menuPwaInstallItem: document.getElementById('menu-pwa-install-item'),
+    pwaInstallBtn: document.getElementById('pwa-install-btn'),
     soundToggleBtn: document.getElementById('sound-toggle-btn'),
     soundOnIcon: document.getElementById('sound-on-icon'),
     soundOffIcon: document.getElementById('sound-off-icon'),
-    profileEditBtn: document.getElementById('profile-edit-btn'),
-    userAvatarPill: document.getElementById('user-avatar-pill'),
-    userNameDisplay: document.getElementById('user-name-display'),
-    mobileMenuBtn: document.getElementById('mobile-menu-btn'),
-    pwaInstallBtn: document.getElementById('pwa-install-btn'),
+    soundStatusPill: document.getElementById('sound-status-pill'),
+
+    // Self Profile in Sidebar
+    selfSidebarAvatar: document.getElementById('self-sidebar-avatar'),
+    selfSidebarName: document.getElementById('self-sidebar-name'),
+    selfSidebarBio: document.getElementById('self-sidebar-bio'),
+    selfSidebarEditBtn: document.getElementById('self-sidebar-edit-btn'),
 
     // Sidebar & Drawer
     sidebarPanel: document.getElementById('sidebar-panel'),
@@ -641,13 +661,15 @@ function initializePeer(preferredId = null) {
 }
 
 function updateConnectionStatus(status, text) {
-    DOM.connStatusText.innerText = text;
-    if (status === 'ready') {
-        DOM.connStatusIndicator.className = 'w-2.5 h-2.5 rounded-full bg-success';
-    } else if (status === 'connecting' || status === 'disconnected') {
-        DOM.connStatusIndicator.className = 'w-2.5 h-2.5 rounded-full bg-warning animate-pulse';
-    } else {
-        DOM.connStatusIndicator.className = 'w-2.5 h-2.5 rounded-full bg-error';
+    if (DOM.myPeerStatus) {
+        DOM.myPeerStatus.innerText = (text || status).toLowerCase();
+        if (status === 'ready' || status === 'online') {
+            DOM.myPeerStatus.className = 'badge badge-xs badge-success';
+        } else if (status === 'connecting' || status === 'reconnecting') {
+            DOM.myPeerStatus.className = 'badge badge-xs badge-warning';
+        } else {
+            DOM.myPeerStatus.className = 'badge badge-xs badge-error';
+        }
     }
 }
 
@@ -1725,12 +1747,69 @@ window.openMediaLightbox = function(url, type, name = 'Media Attachment') {
 // ==========================================
 // 15. Peers & Contacts List Rendering
 // ==========================================
+function updateHeaderPeerInfo() {
+    if (!DOM.headerPeerName || !DOM.headerPeerAvatar || !DOM.headerPeerStatusDot || !DOM.headerPeerStatusText) return;
+
+    const count = state.peers.size;
+
+    if (count === 0) {
+        DOM.headerPeerAvatar.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+        `;
+        DOM.headerPeerAvatar.style.backgroundColor = '';
+        DOM.headerPeerAvatar.style.color = '';
+        DOM.headerPeerStatusDot.className = 'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-base-content/20 border-2 border-base-200';
+        DOM.headerPeerName.innerText = 'Direct P2P Chat';
+        DOM.headerPeerStatusText.innerText = 'Waiting for peer to connect...';
+        DOM.headerPeerStatusText.className = 'text-[11px] text-base-content/60 truncate';
+    } else if (count === 1) {
+        const singlePeer = state.peers.values().next().value;
+        if (singlePeer) {
+            const initial = getInitials(singlePeer.name || 'Peer');
+            DOM.headerPeerAvatar.innerHTML = `<span>${escapeHtml(initial)}</span>`;
+            DOM.headerPeerAvatar.style.backgroundColor = singlePeer.avatarColor || '#3b82f6';
+            DOM.headerPeerAvatar.style.color = '#ffffff';
+            DOM.headerPeerStatusDot.className = 'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-success border-2 border-base-200 status-dot-online';
+            DOM.headerPeerName.innerText = singlePeer.name || 'Connected Peer';
+
+            if (singlePeer.isTyping) {
+                DOM.headerPeerStatusText.innerText = 'typing...';
+                DOM.headerPeerStatusText.className = 'text-[11px] text-primary font-medium truncate animate-pulse';
+            } else {
+                DOM.headerPeerStatusText.innerText = singlePeer.bio ? `Online • ${singlePeer.bio}` : 'Online';
+                DOM.headerPeerStatusText.className = 'text-[11px] text-success truncate';
+            }
+        }
+    } else {
+        DOM.headerPeerAvatar.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+        `;
+        DOM.headerPeerAvatar.style.backgroundColor = '';
+        DOM.headerPeerAvatar.style.color = '';
+        DOM.headerPeerStatusDot.className = 'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-success border-2 border-base-200 status-dot-online';
+        DOM.headerPeerName.innerText = `Mesh Room (${count} peers)`;
+
+        const typingPeer = Array.from(state.peers.values()).find(p => p.isTyping);
+        if (typingPeer) {
+            DOM.headerPeerStatusText.innerText = `${typingPeer.name} is typing...`;
+            DOM.headerPeerStatusText.className = 'text-[11px] text-primary font-medium truncate animate-pulse';
+        } else {
+            DOM.headerPeerStatusText.innerText = `${count} devices online`;
+            DOM.headerPeerStatusText.className = 'text-[11px] text-success truncate';
+        }
+    }
+}
+
 function renderPeersList() {
     DOM.connectedPeers.innerHTML = '';
     const count = state.peers.size;
 
-    DOM.peerCountText.innerText = `${count} connected`;
-    DOM.activeTabBadge.innerText = count;
+    if (DOM.activeTabBadge) DOM.activeTabBadge.innerText = count;
+    updateHeaderPeerInfo();
 
     if (count === 0) {
         DOM.connectedPeers.appendChild(DOM.noPeersPlaceholder);
@@ -1877,6 +1956,8 @@ function updateTypingIndicator() {
             typingNames.push(peer.name);
         }
     });
+
+    updateHeaderPeerInfo();
 
     if (typingNames.length === 0) {
         DOM.typingIndicator.innerHTML = '';
@@ -2055,9 +2136,12 @@ function showQRCodeModal() {
 // 18. User Profile Management
 // ==========================================
 function updateUserProfileUI() {
-    DOM.userNameDisplay.innerText = state.user.name;
-    DOM.userAvatarPill.innerText = getInitials(state.user.name);
-    DOM.userAvatarPill.style.backgroundColor = state.user.avatarColor;
+    if (DOM.selfSidebarName) DOM.selfSidebarName.innerText = state.user.name;
+    if (DOM.selfSidebarBio) DOM.selfSidebarBio.innerText = state.user.bio || 'Available for P2P messaging';
+    if (DOM.selfSidebarAvatar) {
+        DOM.selfSidebarAvatar.innerText = getInitials(state.user.name);
+        DOM.selfSidebarAvatar.style.backgroundColor = state.user.avatarColor || '#3b82f6';
+    }
 }
 
 function handleSaveProfile(e) {
@@ -2231,11 +2315,19 @@ function initTheme() {
 
 function updateSoundUI() {
     if (state.settings.soundEnabled) {
-        DOM.soundOnIcon.classList.remove('hidden');
-        DOM.soundOffIcon.classList.add('hidden');
+        if (DOM.soundOnIcon) DOM.soundOnIcon.classList.remove('hidden');
+        if (DOM.soundOffIcon) DOM.soundOffIcon.classList.add('hidden');
+        if (DOM.soundStatusPill) {
+            DOM.soundStatusPill.innerText = 'ON';
+            DOM.soundStatusPill.className = 'badge badge-xs badge-success';
+        }
     } else {
-        DOM.soundOnIcon.classList.add('hidden');
-        DOM.soundOffIcon.classList.remove('hidden');
+        if (DOM.soundOnIcon) DOM.soundOnIcon.classList.add('hidden');
+        if (DOM.soundOffIcon) DOM.soundOffIcon.classList.remove('hidden');
+        if (DOM.soundStatusPill) {
+            DOM.soundStatusPill.innerText = 'OFF';
+            DOM.soundStatusPill.className = 'badge badge-xs badge-ghost opacity-60';
+        }
     }
 }
 
@@ -2360,15 +2452,28 @@ function setupEventListeners() {
     DOM.sidebarCloseBtn.addEventListener('click', () => toggleMobileDrawer(false));
     DOM.sidebarBackdrop.addEventListener('click', () => toggleMobileDrawer(false));
 
-    DOM.profileEditBtn.addEventListener('click', () => {
+    // Clicking header peer card opens drawer on mobile
+    if (DOM.headerPeerCard) {
+        DOM.headerPeerCard.style.cursor = 'pointer';
+        DOM.headerPeerCard.addEventListener('click', () => {
+            if (window.innerWidth < 768) {
+                toggleMobileDrawer(true);
+            }
+        });
+    }
+
+    const openProfileModal = () => {
         DOM.profileNameInp.value = state.user.name;
         DOM.profileBioInp.value = state.user.bio || '';
         DOM.profileModal.showModal();
-    });
+    };
+
+    if (DOM.menuEditProfileBtn) DOM.menuEditProfileBtn.addEventListener('click', openProfileModal);
+    if (DOM.selfSidebarEditBtn) DOM.selfSidebarEditBtn.addEventListener('click', openProfileModal);
     DOM.profileForm.addEventListener('submit', handleSaveProfile);
     DOM.profileCancelBtn.addEventListener('click', () => DOM.profileModal.close());
 
-    DOM.backupModalBtn.addEventListener('click', () => DOM.backupModal.showModal());
+    if (DOM.menuBackupBtn) DOM.menuBackupBtn.addEventListener('click', () => DOM.backupModal.showModal());
     DOM.exportBackupBtn.addEventListener('click', exportFullBackup);
     DOM.importBackupBtn.addEventListener('click', importFullBackup);
     DOM.modalSyncBtn.addEventListener('click', () => {
@@ -2376,6 +2481,7 @@ function setupEventListeners() {
         DOM.backupModal.close();
     });
     DOM.syncNowBtn.addEventListener('click', triggerMeshSync);
+    if (DOM.syncNowHeaderBtn) DOM.syncNowHeaderBtn.addEventListener('click', triggerMeshSync);
 
     // Stop video when closing media modal
     DOM.mediaModal.addEventListener('close', () => {
@@ -2408,6 +2514,9 @@ function setupPWA() {
     window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
         deferredPrompt = e;
+        if (DOM.menuPwaInstallItem) {
+            DOM.menuPwaInstallItem.classList.remove('hidden');
+        }
         if (DOM.pwaInstallBtn) {
             DOM.pwaInstallBtn.classList.remove('hidden');
         }
@@ -2422,11 +2531,13 @@ function setupPWA() {
                 showToast('Installing PeerWave...', 'success');
             }
             deferredPrompt = null;
+            if (DOM.menuPwaInstallItem) DOM.menuPwaInstallItem.classList.add('hidden');
             DOM.pwaInstallBtn.classList.add('hidden');
         });
     }
 
     window.addEventListener('appinstalled', () => {
+        if (DOM.menuPwaInstallItem) DOM.menuPwaInstallItem.classList.add('hidden');
         if (DOM.pwaInstallBtn) DOM.pwaInstallBtn.classList.add('hidden');
         showToast('PeerWave installed successfully!', 'success');
     });
@@ -2450,6 +2561,7 @@ window.addEventListener('DOMContentLoaded', () => {
     initTheme();
     updateSoundUI();
     updateUserProfileUI();
+    updateHeaderPeerInfo();
     renderContactsList();
     restoreChatFromStorage();
     setupEventListeners();
