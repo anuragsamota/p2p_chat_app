@@ -188,7 +188,9 @@ const state = {
     incomingCall: null,
     callAudioInterval: null,
     voiceRecorder: null,
-    pendingDeleteMessageId: null
+    pendingDeleteMessageId: null,
+    activeChatPeer: null, // Active conversation peer/contact details
+    callVideoFitMode: 'contain' // 'contain' (Fit full frame, no crop) or 'cover' (Fill screen)
 };
 
 Storage.saveProfile(state.user);
@@ -354,7 +356,11 @@ const DOM = {
     callStatusBadge: document.getElementById('call-status-badge'),
     callDurationTimer: document.getElementById('call-duration-timer'),
     callCollapseBtn: document.getElementById('call-collapse-btn'),
+    remoteVideoAmbient: document.getElementById('remote-video-ambient'),
     remoteVideo: document.getElementById('remote-video'),
+    callAspectModeBtn: document.getElementById('call-aspect-mode-btn'),
+    callAspectFitIcon: document.getElementById('call-aspect-fit-icon'),
+    callAspectFillIcon: document.getElementById('call-aspect-fill-icon'),
     callVoiceStage: document.getElementById('call-voice-stage'),
     callVoiceAvatar: document.getElementById('call-voice-avatar'),
     callStatusText: document.getElementById('call-status-text'),
@@ -982,6 +988,12 @@ function cleanupPeer(peerId, reason = '') {
         const p = state.peers.get(peerId);
         state.peers.delete(peerId);
         updateContactOnlineStatus(peerId, false);
+
+        // Keep activeChatPeer intact with offline status so chat remains visible to view
+        if (state.activeChatPeer && (state.activeChatPeer.id === peerId || (p && p.userId && state.activeChatPeer.userId === p.userId))) {
+            state.activeChatPeer.isOnline = false;
+            state.activeChatPeer.lastSeen = Date.now();
+        }
 
         if (reason) {
             addSystemMessage(reason);
@@ -2369,42 +2381,72 @@ window.openMediaLightbox = function(url, type, name = 'Media Attachment') {
 // ==========================================
 // 15. Peers & Contacts List Rendering
 // ==========================================
+function toggleMobileDrawer(open) {
+    if (!DOM.sidebarPanel || !DOM.sidebarBackdrop) return;
+    if (open) {
+        DOM.sidebarPanel.classList.remove('-translate-x-full');
+        DOM.sidebarBackdrop.classList.remove('hidden');
+    } else {
+        DOM.sidebarPanel.classList.add('-translate-x-full');
+        DOM.sidebarBackdrop.classList.add('hidden');
+    }
+}
+
+function initActiveChatPeer() {
+    if (state.peers.size > 0) {
+        const [peerId, peer] = state.peers.entries().next().value;
+        state.activeChatPeer = {
+            id: peerId,
+            userId: peer.userId,
+            name: peer.name,
+            avatarColor: peer.avatarColor,
+            bio: peer.bio || '',
+            isOnline: true,
+            lastSeen: Date.now()
+        };
+        return;
+    }
+
+    // Try contacts
+    if (state.contacts && state.contacts.length > 0) {
+        const sorted = [...state.contacts].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+        const c = sorted[0];
+        state.activeChatPeer = {
+            id: c.id,
+            userId: c.userId,
+            name: c.name,
+            avatarColor: c.avatarColor,
+            bio: c.bio || '',
+            isOnline: Boolean(c.isOnline && state.peers.has(c.id)),
+            lastSeen: c.lastSeen
+        };
+        return;
+    }
+
+    // Try messages fallback
+    if (state.messages && state.messages.length > 0) {
+        const lastRemote = [...state.messages].reverse().find(m => !m.isSelf && m.senderName);
+        if (lastRemote) {
+            state.activeChatPeer = {
+                id: lastRemote.senderId,
+                userId: lastRemote.senderUserId,
+                name: lastRemote.senderName,
+                avatarColor: lastRemote.avatarColor || '#3b82f6',
+                bio: '',
+                isOnline: Boolean(state.peers.has(lastRemote.senderId)),
+                lastSeen: lastRemote.timestamp
+            };
+            return;
+        }
+    }
+}
+
 function updateHeaderPeerInfo() {
     if (!DOM.headerPeerName || !DOM.headerPeerAvatar || !DOM.headerPeerStatusDot || !DOM.headerPeerStatusText) return;
 
     const count = state.peers.size;
 
-    if (count === 0) {
-        DOM.headerPeerAvatar.innerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-        `;
-        DOM.headerPeerAvatar.style.backgroundColor = '';
-        DOM.headerPeerAvatar.style.color = '';
-        DOM.headerPeerStatusDot.className = 'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-base-content/20 border-2 border-base-200';
-        DOM.headerPeerName.innerText = 'Direct P2P Chat';
-        DOM.headerPeerStatusText.innerText = 'Waiting for peer to connect...';
-        DOM.headerPeerStatusText.className = 'text-[11px] text-base-content/60 truncate';
-    } else if (count === 1) {
-        const singlePeer = state.peers.values().next().value;
-        if (singlePeer) {
-            const initial = getInitials(singlePeer.name || 'Peer');
-            DOM.headerPeerAvatar.innerHTML = `<span>${escapeHtml(initial)}</span>`;
-            DOM.headerPeerAvatar.style.backgroundColor = singlePeer.avatarColor || '#3b82f6';
-            DOM.headerPeerAvatar.style.color = '#ffffff';
-            DOM.headerPeerStatusDot.className = 'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-success border-2 border-base-200 status-dot-online';
-            DOM.headerPeerName.innerText = singlePeer.name || 'Connected Peer';
-
-            if (singlePeer.isTyping) {
-                DOM.headerPeerStatusText.innerText = 'typing...';
-                DOM.headerPeerStatusText.className = 'text-[11px] text-primary font-medium truncate animate-pulse';
-            } else {
-                DOM.headerPeerStatusText.innerText = singlePeer.bio ? `Online • ${singlePeer.bio}` : 'Online';
-                DOM.headerPeerStatusText.className = 'text-[11px] text-success truncate';
-            }
-        }
-    } else {
+    if (count > 1) {
         DOM.headerPeerAvatar.innerHTML = `
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -2423,14 +2465,130 @@ function updateHeaderPeerInfo() {
             DOM.headerPeerStatusText.innerText = `${count} devices online`;
             DOM.headerPeerStatusText.className = 'text-[11px] text-success truncate';
         }
+    } else if (count === 1) {
+        const [singlePeerId, singlePeer] = state.peers.entries().next().value;
+        if (singlePeer) {
+            state.activeChatPeer = {
+                id: singlePeerId,
+                userId: singlePeer.userId,
+                name: singlePeer.name || 'Connected Peer',
+                avatarColor: singlePeer.avatarColor || '#3b82f6',
+                bio: singlePeer.bio || '',
+                isOnline: true,
+                lastSeen: Date.now()
+            };
+
+            const initial = getInitials(singlePeer.name || 'Peer');
+            DOM.headerPeerAvatar.innerHTML = `<span>${escapeHtml(initial)}</span>`;
+            DOM.headerPeerAvatar.style.backgroundColor = singlePeer.avatarColor || '#3b82f6';
+            DOM.headerPeerAvatar.style.color = '#ffffff';
+            DOM.headerPeerStatusDot.className = 'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-success border-2 border-base-200 status-dot-online';
+            DOM.headerPeerName.innerText = singlePeer.name || 'Connected Peer';
+
+            if (singlePeer.isTyping) {
+                DOM.headerPeerStatusText.innerText = 'typing...';
+                DOM.headerPeerStatusText.className = 'text-[11px] text-primary font-medium truncate animate-pulse';
+            } else {
+                DOM.headerPeerStatusText.innerText = singlePeer.bio ? `Online • ${singlePeer.bio}` : 'Online';
+                DOM.headerPeerStatusText.className = 'text-[11px] text-success truncate';
+            }
+        }
+    } else {
+        // Disconnected or no active WebRTC connection: Retain active chat peer info with "Offline" status!
+        if (!state.activeChatPeer) {
+            initActiveChatPeer();
+        }
+
+        if (state.activeChatPeer) {
+            const peer = state.activeChatPeer;
+            const initial = getInitials(peer.name || 'Peer');
+            DOM.headerPeerAvatar.innerHTML = `<span>${escapeHtml(initial)}</span>`;
+            DOM.headerPeerAvatar.style.backgroundColor = peer.avatarColor || '#6b7280';
+            DOM.headerPeerAvatar.style.color = '#ffffff';
+            DOM.headerPeerStatusDot.className = 'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-base-content/30 border-2 border-base-200 status-dot-offline';
+            DOM.headerPeerName.innerText = peer.name || 'Offline Peer';
+            const lastSeenText = peer.lastSeen ? `Offline • ${formatLastSeen(peer.lastSeen, false)}` : 'Offline';
+            DOM.headerPeerStatusText.innerText = lastSeenText;
+            DOM.headerPeerStatusText.className = 'text-[11px] text-base-content/60 truncate';
+        } else {
+            DOM.headerPeerAvatar.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+            `;
+            DOM.headerPeerAvatar.style.backgroundColor = '';
+            DOM.headerPeerAvatar.style.color = '';
+            DOM.headerPeerStatusDot.className = 'absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-base-content/20 border-2 border-base-200';
+            DOM.headerPeerName.innerText = 'Direct P2P Chat';
+            DOM.headerPeerStatusText.innerText = 'Waiting for peer to connect...';
+            DOM.headerPeerStatusText.className = 'text-[11px] text-base-content/60 truncate';
+        }
     }
 }
 
 function renderPeersList() {
     DOM.connectedPeers.innerHTML = '';
-    const count = state.peers.size;
 
-    if (DOM.activeTabBadge) DOM.activeTabBadge.innerText = count;
+    // Aggregate all conversations: active connected peers + saved contacts + chat history
+    const convMap = new Map();
+
+    // 1. Active connected peers
+    state.peers.forEach((peer, peerId) => {
+        const key = peer.userId || peerId;
+        convMap.set(key, {
+            id: peerId,
+            userId: peer.userId,
+            name: peer.name || 'Connected Peer',
+            avatarColor: peer.avatarColor || '#3b82f6',
+            bio: peer.bio || '',
+            isOnline: true,
+            lastSeen: Date.now()
+        });
+    });
+
+    // 2. Saved Contacts
+    if (state.contacts) {
+        state.contacts.forEach((contact) => {
+            const key = contact.userId || contact.id;
+            if (!convMap.has(key)) {
+                convMap.set(key, {
+                    id: contact.id,
+                    userId: contact.userId,
+                    name: contact.name,
+                    avatarColor: contact.avatarColor,
+                    bio: contact.bio || '',
+                    isOnline: Boolean(contact.isOnline && state.peers.has(contact.id)),
+                    lastSeen: contact.lastSeen
+                });
+            }
+        });
+    }
+
+    // 3. Fallback: Messages
+    if (state.messages) {
+        [...state.messages].reverse().forEach(m => {
+            if (!m.isSelf && m.senderName) {
+                const key = m.senderUserId || m.senderId;
+                if (!convMap.has(key)) {
+                    convMap.set(key, {
+                        id: m.senderId,
+                        userId: m.senderUserId,
+                        name: m.senderName,
+                        avatarColor: m.avatarColor || '#3b82f6',
+                        bio: '',
+                        isOnline: Boolean(state.peers.has(m.senderId)),
+                        lastSeen: m.timestamp
+                    });
+                }
+            }
+        });
+    }
+
+    const conversations = Array.from(convMap.values());
+    const count = conversations.length;
+    const onlineCount = state.peers.size;
+
+    if (DOM.activeTabBadge) DOM.activeTabBadge.innerText = onlineCount > 0 ? onlineCount : count;
     if (DOM.sidebarTotalChatsBadge) DOM.sidebarTotalChatsBadge.innerText = count;
     updateHeaderPeerInfo();
 
@@ -2439,39 +2597,65 @@ function renderPeersList() {
         return;
     }
 
-    state.peers.forEach((peer, peerId) => {
+    // Sort: Online peers first, then by lastSeen desc
+    conversations.sort((a, b) => {
+        if (a.isOnline === b.isOnline) {
+            return (b.lastSeen || 0) - (a.lastSeen || 0);
+        }
+        return a.isOnline ? -1 : 1;
+    });
+
+    conversations.forEach((conv) => {
         const item = document.createElement('div');
-        item.className = 'card bg-base-100 p-2.5 shadow-sm border border-base-300 flex flex-row items-center justify-between gap-2';
-        const initial = getInitials(peer.name);
+        const isActive = state.activeChatPeer && (state.activeChatPeer.id === conv.id || (conv.userId && state.activeChatPeer.userId === conv.userId));
+        item.className = `card bg-base-100 p-2.5 shadow-sm border ${isActive ? 'border-primary ring-1 ring-primary/40' : 'border-base-300'} hover:bg-base-200/50 cursor-pointer flex flex-row items-center justify-between gap-2 transition-all`;
+        const initial = getInitials(conv.name);
+
+        const statusSubText = conv.isOnline 
+            ? (conv.bio || 'Online') 
+            : (conv.lastSeen ? formatLastSeen(conv.lastSeen, false) : 'Offline');
 
         item.innerHTML = `
-            <div class="flex items-center gap-2 min-w-0">
-                <div class="relative">
-                    <div class="w-8 h-8 rounded-full text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-sm" style="background-color: ${peer.avatarColor}">
+            <div class="flex items-center gap-2 min-w-0 flex-1">
+                <div class="relative shrink-0">
+                    <div class="w-8 h-8 rounded-full text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-sm" style="background-color: ${conv.avatarColor}">
                         <span>${escapeHtml(initial)}</span>
                     </div>
-                    <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-success border-2 border-base-100 status-dot-online"></span>
+                    <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ${conv.isOnline ? 'bg-success border-2 border-base-100 status-dot-online' : 'bg-base-content/30 border-2 border-base-100 status-dot-offline'}"></span>
                 </div>
-                <div class="flex flex-col min-w-0">
-                    <div class="flex items-center gap-1.5">
-                        <span class="text-xs font-semibold truncate leading-tight">${escapeHtml(peer.name)}</span>
+                <div class="flex flex-col min-w-0 flex-1">
+                    <div class="flex items-center justify-between gap-1.5">
+                        <span class="text-xs font-semibold truncate leading-tight">${escapeHtml(conv.name)}</span>
                     </div>
-                    <span class="text-[10px] opacity-60 truncate">${escapeHtml(peer.bio || 'Online')}</span>
+                    <div class="flex items-center justify-between gap-1">
+                        <span class="text-[10px] ${conv.isOnline ? 'text-success' : 'opacity-60'} truncate">${escapeHtml(statusSubText)}</span>
+                        ${conv.isOnline ? `<span class="badge badge-success badge-xs text-[9px]">Online</span>` : `<span class="badge badge-ghost badge-xs text-[9px] opacity-70">Offline</span>`}
+                    </div>
                 </div>
             </div>
-            <div class="flex items-center gap-1">
-                <button class="btn btn-ghost btn-circle btn-xs text-base-content/60 hover:text-primary" onclick="copyPeerId('${peerId}')" title="Copy Peer ID">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                </button>
-                <button class="btn btn-ghost btn-circle btn-xs text-error/60 hover:text-error" onclick="disconnectPeer('${peerId}')" title="Disconnect Peer">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
+            <div class="flex items-center gap-1 shrink-0" onclick="event.stopPropagation()">
+                ${!conv.isOnline ? `
+                    <button class="btn btn-primary btn-outline btn-xs px-2" onclick="quickConnect('${conv.id}')" title="Connect to ${escapeHtml(conv.name)}">
+                        Connect
+                    </button>
+                ` : `
+                    <button class="btn btn-ghost btn-circle btn-xs text-base-content/60 hover:text-primary" onclick="copyPeerId('${conv.id}')" title="Copy Peer ID">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                    </button>
+                    <button class="btn btn-ghost btn-circle btn-xs text-error/60 hover:text-error" onclick="disconnectPeer('${conv.id}')" title="Disconnect Peer">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                `}
             </div>
         `;
+
+        item.addEventListener('click', () => {
+            window.selectChatConversation(conv.id);
+        });
 
         DOM.connectedPeers.appendChild(item);
     });
@@ -2503,19 +2687,19 @@ function renderContactsList() {
         const lastSeenHtml = formatLastSeen(contact.lastSeen, isOnline);
 
         item.innerHTML = `
-            <div class="flex items-center gap-2 min-w-0">
-                <div class="relative">
+            <div class="flex items-center gap-2 min-w-0 flex-1">
+                <div class="relative shrink-0">
                     <div class="w-8 h-8 rounded-full text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-sm" style="background-color: ${contact.avatarColor}">
                         <span>${escapeHtml(initial)}</span>
                     </div>
-                    <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-success border-2 border-base-100 status-dot-online' : 'bg-base-content/30 border-2 border-base-100'}"></span>
+                    <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-success border-2 border-base-100 status-dot-online' : 'bg-base-content/30 border-2 border-base-100 status-dot-offline'}"></span>
                 </div>
-                <div class="flex flex-col min-w-0">
+                <div class="flex flex-col min-w-0 flex-1">
                     <span class="text-xs font-semibold truncate leading-tight">${escapeHtml(contact.name)}</span>
                     <span class="text-[10px] leading-tight">${lastSeenHtml}</span>
                 </div>
             </div>
-            <div class="flex items-center gap-1">
+            <div class="flex items-center gap-1 shrink-0" onclick="event.stopPropagation()">
                 ${!isOnline ? `
                     <button class="btn btn-outline btn-primary btn-xs" onclick="quickConnect('${contact.id}')" title="Connect to this contact">
                         Connect
@@ -2534,9 +2718,58 @@ function renderContactsList() {
             </div>
         `;
 
+        item.addEventListener('click', () => {
+            window.selectChatConversation(contact.id);
+        });
+
         DOM.savedContactsList.appendChild(item);
     });
 }
+
+window.selectChatConversation = function(id) {
+    if (state.peers.has(id)) {
+        const p = state.peers.get(id);
+        state.activeChatPeer = {
+            id: id,
+            userId: p.userId,
+            name: p.name,
+            avatarColor: p.avatarColor,
+            bio: p.bio || '',
+            isOnline: true,
+            lastSeen: Date.now()
+        };
+    } else {
+        const contact = (state.contacts || []).find(c => c.id === id || c.userId === id);
+        if (contact) {
+            state.activeChatPeer = {
+                id: contact.id,
+                userId: contact.userId,
+                name: contact.name,
+                avatarColor: contact.avatarColor,
+                bio: contact.bio || '',
+                isOnline: false,
+                lastSeen: contact.lastSeen
+            };
+        } else {
+            const msg = [...(state.messages || [])].reverse().find(m => !m.isSelf && (m.senderId === id || m.senderUserId === id));
+            if (msg) {
+                state.activeChatPeer = {
+                    id: msg.senderId,
+                    userId: msg.senderUserId,
+                    name: msg.senderName,
+                    avatarColor: msg.avatarColor || '#3b82f6',
+                    bio: '',
+                    isOnline: false,
+                    lastSeen: msg.timestamp
+                };
+            }
+        }
+    }
+
+    updateHeaderPeerInfo();
+    renderPeersList();
+    toggleMobileDrawer(false);
+};
 
 window.quickConnect = function(id) {
     DOM.peerIdInput.value = id;
@@ -3289,6 +3522,15 @@ async function startCall(callType = 'voice') {
             DOM.localVideo.srcObject = localStream;
             DOM.localVideo.classList.add('video-mirror');
             DOM.localVideoPip.classList.remove('hidden');
+
+            const vTrack = localStream.getVideoTracks()[0];
+            if (vTrack && vTrack.getSettings) {
+                const settings = vTrack.getSettings();
+                updateLocalVideoPipAspect(settings.width, settings.height);
+            }
+            DOM.localVideo.onloadedmetadata = () => {
+                updateLocalVideoPipAspect(DOM.localVideo.videoWidth, DOM.localVideo.videoHeight);
+            };
         } else {
             DOM.localVideoPip.classList.add('hidden');
         }
@@ -3409,6 +3651,15 @@ async function acceptIncomingCall() {
             DOM.localVideo.srcObject = localStream;
             DOM.localVideo.classList.add('video-mirror');
             DOM.localVideoPip.classList.remove('hidden');
+
+            const vTrack = localStream.getVideoTracks()[0];
+            if (vTrack && vTrack.getSettings) {
+                const settings = vTrack.getSettings();
+                updateLocalVideoPipAspect(settings.width, settings.height);
+            }
+            DOM.localVideo.onloadedmetadata = () => {
+                updateLocalVideoPipAspect(DOM.localVideo.videoWidth, DOM.localVideo.videoHeight);
+            };
         } else {
             DOM.localVideoPip.classList.add('hidden');
         }
@@ -3473,6 +3724,53 @@ function declineIncomingCall() {
     }
 }
 
+function toggleVideoAspectMode() {
+    if (!state.activeCall || state.activeCall.type !== 'video') return;
+    const newMode = state.callVideoFitMode === 'contain' ? 'cover' : 'contain';
+    applyVideoAspectMode(newMode);
+}
+
+function applyVideoAspectMode(mode) {
+    state.callVideoFitMode = mode;
+    if (!DOM.remoteVideo) return;
+
+    if (mode === 'cover') {
+        DOM.remoteVideo.classList.remove('object-contain');
+        DOM.remoteVideo.classList.add('object-cover');
+        if (DOM.callAspectFitIcon) DOM.callAspectFitIcon.classList.add('hidden');
+        if (DOM.callAspectFillIcon) DOM.callAspectFillIcon.classList.remove('hidden');
+        if (DOM.callAspectModeBtn) DOM.callAspectModeBtn.setAttribute('title', 'Aspect Ratio: Fill (Zoomed). Click to Fit Screen.');
+        if (DOM.remoteVideoAmbient) DOM.remoteVideoAmbient.classList.add('hidden');
+        showToast('Video Aspect: Fill Screen (Zoom)', 'info', 1500);
+    } else {
+        DOM.remoteVideo.classList.remove('object-cover');
+        DOM.remoteVideo.classList.add('object-contain');
+        if (DOM.callAspectFitIcon) DOM.callAspectFitIcon.classList.remove('hidden');
+        if (DOM.callAspectFillIcon) DOM.callAspectFillIcon.classList.add('hidden');
+        if (DOM.callAspectModeBtn) DOM.callAspectModeBtn.setAttribute('title', 'Aspect Ratio: Fit (No crop). Click to Fill Screen.');
+        if (DOM.remoteVideoAmbient && DOM.remoteVideo.srcObject) {
+            DOM.remoteVideoAmbient.classList.remove('hidden');
+        }
+        showToast('Video Aspect: Fit to Screen (Full Frame)', 'info', 1500);
+    }
+}
+
+function updateLocalVideoPipAspect(videoWidth, videoHeight) {
+    if (!DOM.localVideoPip) return;
+    DOM.localVideoPip.classList.remove('aspect-video', 'aspect-[9/16]');
+    if (videoWidth && videoHeight) {
+        if (videoWidth > videoHeight) {
+            DOM.localVideoPip.classList.add('aspect-video');
+            DOM.localVideoPip.style.width = '144px';
+        } else {
+            DOM.localVideoPip.classList.add('aspect-[9/16]');
+            DOM.localVideoPip.style.width = '';
+        }
+    } else {
+        DOM.localVideoPip.classList.add('aspect-[9/16]');
+    }
+}
+
 function handleRemoteCallStream(remoteStream) {
     if (!state.activeCall) return;
     stopCallAudio();
@@ -3501,9 +3799,28 @@ function handleRemoteCallStream(remoteStream) {
         DOM.remoteVideo.srcObject = remoteStream;
         DOM.remoteVideo.classList.remove('hidden');
         DOM.remoteVideo.play().catch(e => console.warn('Remote video autoplay prevented:', e));
+
+        if (DOM.remoteVideoAmbient) {
+            DOM.remoteVideoAmbient.srcObject = remoteStream;
+            DOM.remoteVideoAmbient.classList.remove('hidden');
+            DOM.remoteVideoAmbient.play().catch(e => console.warn('Ambient video autoplay prevented:', e));
+        }
+
+        if (DOM.callAspectModeBtn) {
+            DOM.callAspectModeBtn.classList.remove('hidden');
+        }
+
+        applyVideoAspectMode(state.callVideoFitMode || 'contain');
         DOM.callVoiceStage.classList.add('hidden');
     } else {
         DOM.remoteVideo.classList.add('hidden');
+        if (DOM.remoteVideoAmbient) {
+            DOM.remoteVideoAmbient.classList.add('hidden');
+            DOM.remoteVideoAmbient.srcObject = null;
+        }
+        if (DOM.callAspectModeBtn) {
+            DOM.callAspectModeBtn.classList.add('hidden');
+        }
         DOM.callVoiceStage.classList.remove('hidden');
         DOM.remoteVideo.srcObject = remoteStream;
     }
@@ -3536,6 +3853,14 @@ function endActiveCall(reason = 'Call ended') {
 
     if (DOM.remoteAudio) DOM.remoteAudio.srcObject = null;
     DOM.remoteVideo.srcObject = null;
+    if (DOM.remoteVideoAmbient) {
+        DOM.remoteVideoAmbient.srcObject = null;
+        DOM.remoteVideoAmbient.classList.add('hidden');
+    }
+    if (DOM.callAspectModeBtn) {
+        DOM.callAspectModeBtn.classList.add('hidden');
+    }
+    state.callVideoFitMode = 'contain';
     DOM.localVideo.srcObject = null;
     DOM.activeCallOverlay.classList.add('hidden');
     DOM.activeCallOverlay.style.display = 'none';
@@ -3835,6 +4160,8 @@ function setupEventListeners() {
     if (DOM.callToggleMicBtn) DOM.callToggleMicBtn.addEventListener('click', toggleCallMic);
     if (DOM.callToggleCamBtn) DOM.callToggleCamBtn.addEventListener('click', toggleCallCam);
     if (DOM.callFlipCamBtn) DOM.callFlipCamBtn.addEventListener('click', flipCallCamera);
+    if (DOM.callAspectModeBtn) DOM.callAspectModeBtn.addEventListener('click', toggleVideoAspectMode);
+    if (DOM.remoteVideo) DOM.remoteVideo.addEventListener('dblclick', toggleVideoAspectMode);
     if (DOM.callShareScreenBtn) DOM.callShareScreenBtn.addEventListener('click', toggleCallScreenShare);
     if (DOM.callCollapseBtn) DOM.callCollapseBtn.addEventListener('click', toggleMinimizeCall);
 
@@ -4059,7 +4386,9 @@ window.addEventListener('DOMContentLoaded', () => {
     initTheme();
     updateSoundUI();
     updateUserProfileUI();
+    initActiveChatPeer();
     updateHeaderPeerInfo();
+    renderPeersList();
     renderContactsList();
     restoreChatFromStorage();
     setupEventListeners();

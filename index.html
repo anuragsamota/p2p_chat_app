@@ -815,13 +815,16 @@
             </button>
         </div>
 
-        <!-- Video & Audio Stream Stage -->
-        <div class="relative flex-1 my-3 flex items-center justify-center overflow-hidden rounded-2xl bg-neutral/80 shadow-2xl border border-base-content/10">
-            <!-- Remote Fullscreen Video -->
-            <video id="remote-video" autoplay playsinline class="w-full h-full object-cover rounded-2xl hidden"></video>
+        <!-- Video & Audio Stream Stage (Aspect-Ratio Aware Stage) -->
+        <div id="video-stream-stage" class="relative flex-1 my-3 flex items-center justify-center overflow-hidden rounded-2xl bg-neutral/95 shadow-2xl border border-base-content/10 select-none">
+            <!-- Ambient blurred video backdrop (fills letterbox/pillarbox empty margins with matching ambient lighting) -->
+            <video id="remote-video-ambient" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover blur-3xl opacity-35 pointer-events-none scale-110 -z-0 hidden"></video>
+
+            <!-- Remote Fullscreen Video (Defaults to object-contain to preserve natural 100% full frame without cropping) -->
+            <video id="remote-video" autoplay playsinline class="w-full h-full object-contain rounded-2xl z-10 hidden transition-all duration-200 cursor-pointer" title="Double-tap or click aspect toggle to change fit/fill"></video>
 
             <!-- Voice Call Avatar / Visualizer Stage (Displayed when video is off) -->
-            <div id="call-voice-stage" class="flex flex-col items-center justify-center p-6 text-center">
+            <div id="call-voice-stage" class="flex flex-col items-center justify-center p-6 text-center z-10">
                 <div class="relative mb-6">
                     <div id="call-voice-avatar" class="w-28 h-28 md:w-36 md:h-36 rounded-full text-white font-bold text-3xl md:text-4xl flex items-center justify-center shadow-2xl bg-primary z-10 relative">
                         P
@@ -835,8 +838,8 @@
                 <span class="text-xs text-base-content/50">Encrypted End-to-End P2P</span>
             </div>
 
-            <!-- Picture-in-Picture Local Video Preview -->
-            <div id="local-video-pip" class="absolute bottom-4 right-4 w-28 h-40 md:w-40 md:h-56 rounded-xl border-2 border-primary/80 shadow-2xl overflow-hidden bg-black/80 transition-all z-20 hidden">
+            <!-- Picture-in-Picture Local Video Preview (Adaptive aspect ratio) -->
+            <div id="local-video-pip" class="absolute bottom-4 right-4 rounded-xl border-2 border-primary/80 shadow-2xl overflow-hidden bg-black/80 transition-all z-20 hidden w-28 md:w-36 aspect-[9/16]">
                 <video id="local-video" autoplay playsinline muted class="w-full h-full object-cover"></video>
                 <div class="absolute bottom-1 left-1 bg-black/60 backdrop-blur-xs px-1.5 py-0.5 rounded text-[10px] text-white font-medium">You</div>
             </div>
@@ -872,6 +875,16 @@
             <button id="call-flip-cam-btn" type="button" class="btn btn-circle btn-neutral btn-md shadow-md touch-manipulation hidden" title="Flip Camera Front/Back">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </button>
+
+            <!-- Aspect Ratio Toggle (Fit to Screen vs Fill Screen) -->
+            <button id="call-aspect-mode-btn" type="button" class="btn btn-circle btn-neutral btn-md shadow-md touch-manipulation hidden" title="Aspect Ratio: Fit (No crop). Click to Fill Screen.">
+                <svg id="call-aspect-fit-icon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                </svg>
+                <svg id="call-aspect-fill-icon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
                 </svg>
             </button>
 
