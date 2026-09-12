@@ -56,8 +56,22 @@
                 </div>
             </div>
 
-            <!-- Header Right: Quick Sync & Kebab Menu Dropdown (Clean & Uncluttered) -->
+            <!-- Header Right: Calls, Quick Sync & Kebab Menu Dropdown (Clean & Uncluttered) -->
             <div class="flex items-center gap-1 shrink-0">
+                <!-- Voice Call Button -->
+                <button id="voice-call-header-btn" class="btn btn-ghost btn-circle btn-sm text-success" title="Start voice call" aria-label="Start voice call">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                    </svg>
+                </button>
+
+                <!-- Video Call Button -->
+                <button id="video-call-header-btn" class="btn btn-ghost btn-circle btn-sm text-primary" title="Start video call" aria-label="Start video call">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                </button>
+
                 <!-- Sync Button -->
                 <button id="sync-now-header-btn" class="btn btn-ghost btn-circle btn-sm text-info" title="Sync chat messages with connected peers" aria-label="Sync messages">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -344,6 +358,34 @@
                         <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Sparkles">✨</button>
                     </div>
 
+                    <!-- Voice Recording Active Bar (WhatsApp style, slides in when recording) -->
+                    <div id="voice-recording-bar" class="hidden mb-2 items-center justify-between bg-base-100 rounded-xl p-2.5 border border-error/40 shadow-md">
+                        <div class="flex items-center gap-3">
+                            <span class="w-2.5 h-2.5 rounded-full bg-error animate-ping shrink-0"></span>
+                            <span id="voice-recording-timer" class="font-mono font-bold text-xs text-error">0:00</span>
+                            <div class="flex items-center gap-0.5 h-4">
+                                <span class="voice-wave-bar"></span>
+                                <span class="voice-wave-bar"></span>
+                                <span class="voice-wave-bar"></span>
+                                <span class="voice-wave-bar"></span>
+                                <span class="voice-wave-bar"></span>
+                            </div>
+                            <span class="text-xs text-base-content/60 hidden sm:inline">Recording voice note...</span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <button id="voice-cancel-btn" type="button" class="btn btn-ghost btn-circle btn-xs text-error hover:bg-error/10" title="Cancel recording">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                            </button>
+                            <button id="voice-send-btn" type="button" class="btn btn-success btn-circle btn-xs text-white" title="Send voice note">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 transform rotate-90" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- Input Controls -->
                     <div class="flex items-center gap-2">
                         <!-- Hidden file input -->
@@ -360,6 +402,13 @@
                         <div class="flex-1 relative">
                             <input id="msg-inp" type="text" placeholder="Type a message (Press Enter to send)..." class="input input-bordered input-md w-full text-sm bg-base-100 focus:outline-primary pr-10" autocomplete="off" />
                         </div>
+
+                        <!-- Voice Note (Mic) Button -->
+                        <button id="voice-note-btn" type="button" class="btn btn-ghost btn-circle btn-sm md:btn-md text-base-content/70 hover:text-primary hover:bg-base-300" title="Record voice message" aria-label="Record voice message">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                            </svg>
+                        </button>
 
                         <!-- Send Button -->
                         <button id="send-msg-btn" class="btn btn-primary btn-circle btn-sm md:btn-md shadow" title="Send Message" aria-label="Send message">
@@ -519,7 +568,143 @@
         </form>
     </dialog>
 
-    <!-- 5. Toast Notification Stack -->
+    <!-- 5. Incoming Call Modal -->
+    <dialog id="incoming-call-modal" class="modal">
+        <div class="modal-box max-w-xs text-center p-6 bg-base-200 border border-base-300 shadow-2xl rounded-3xl">
+            <!-- Pulsing Caller Avatar -->
+            <div class="relative inline-block mx-auto mb-4">
+                <div id="incoming-caller-avatar" class="w-20 h-20 rounded-full text-white font-bold text-2xl flex items-center justify-center shadow-lg mx-auto bg-primary">
+                    P
+                </div>
+                <span class="absolute -inset-1.5 rounded-full border-2 border-primary/50 animate-ping pointer-events-none"></span>
+            </div>
+            <h3 id="incoming-caller-name" class="font-bold text-lg truncate">Peer</h3>
+            <p id="incoming-call-type" class="text-xs text-base-content/70 mt-1 flex items-center justify-center gap-1.5">
+                <svg id="incoming-call-icon-video" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-primary hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <svg id="incoming-call-icon-voice" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                </svg>
+                <span id="incoming-call-type-text">Incoming Voice Call...</span>
+            </p>
+
+            <div class="flex items-center justify-center gap-8 mt-6">
+                <!-- Decline Button -->
+                <div class="flex flex-col items-center gap-1.5">
+                    <button id="incoming-decline-btn" type="button" class="btn btn-circle btn-error btn-lg shadow-lg hover:scale-105 transition-transform" title="Decline call">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white transform rotate-[135deg]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                        </svg>
+                    </button>
+                    <span class="text-[11px] font-medium opacity-70">Decline</span>
+                </div>
+
+                <!-- Accept Button -->
+                <div class="flex flex-col items-center gap-1.5">
+                    <button id="incoming-accept-btn" type="button" class="btn btn-circle btn-success btn-lg shadow-lg relative hover:scale-105 transition-transform" title="Accept call">
+                        <span class="absolute -inset-1 rounded-full border-2 border-success animate-ping pointer-events-none"></span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                        </svg>
+                    </button>
+                    <span class="text-[11px] font-medium opacity-70">Accept</span>
+                </div>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- 6. Active Call Screen / Overlay -->
+    <div id="active-call-overlay" class="fixed inset-0 z-50 bg-base-300/95 backdrop-blur-xl flex flex-col justify-between p-4 md:p-6 hidden select-none">
+        <!-- Call Header -->
+        <div class="flex items-center justify-between z-10 bg-base-200/60 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-base-content/10">
+            <div class="flex items-center gap-3">
+                <div id="call-peer-avatar-sm" class="w-9 h-9 rounded-full text-white font-bold text-xs flex items-center justify-center shadow bg-primary">
+                    P
+                </div>
+                <div class="flex flex-col">
+                    <span id="call-peer-name" class="font-bold text-sm truncate max-w-[160px] sm:max-w-xs">Peer</span>
+                    <div class="flex items-center gap-2">
+                        <span id="call-status-badge" class="badge badge-success badge-xs font-mono">Connected</span>
+                        <span id="call-duration-timer" class="text-xs font-mono opacity-80">00:00</span>
+                    </div>
+                </div>
+            </div>
+            <!-- Minimize / Collapse button -->
+            <button id="call-collapse-btn" type="button" class="btn btn-ghost btn-circle btn-sm text-base-content/70 hover:text-base-content" title="Minimize call window">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- Video & Audio Stream Stage -->
+        <div class="relative flex-1 my-3 flex items-center justify-center overflow-hidden rounded-2xl bg-neutral/80 shadow-2xl border border-base-content/10">
+            <!-- Remote Fullscreen Video -->
+            <video id="remote-video" autoplay playsinline class="w-full h-full object-cover rounded-2xl hidden"></video>
+
+            <!-- Voice Call Avatar / Visualizer Stage (Displayed when video is off) -->
+            <div id="call-voice-stage" class="flex flex-col items-center justify-center p-6 text-center">
+                <div class="relative mb-6">
+                    <div id="call-voice-avatar" class="w-28 h-28 md:w-36 md:h-36 rounded-full text-white font-bold text-3xl md:text-4xl flex items-center justify-center shadow-2xl bg-primary z-10 relative">
+                        P
+                    </div>
+                    <!-- Concentric Audio Pulse Rings -->
+                    <span class="call-pulse-ring call-pulse-ring-1"></span>
+                    <span class="call-pulse-ring call-pulse-ring-2"></span>
+                    <span class="call-pulse-ring call-pulse-ring-3"></span>
+                </div>
+                <span id="call-status-text" class="text-sm font-medium text-base-content/80 mb-1">Calling...</span>
+                <span class="text-xs text-base-content/50">Encrypted End-to-End P2P</span>
+            </div>
+
+            <!-- Picture-in-Picture Local Video Preview -->
+            <div id="local-video-pip" class="absolute bottom-4 right-4 w-28 h-40 md:w-40 md:h-56 rounded-xl border-2 border-primary/80 shadow-2xl overflow-hidden bg-black/80 transition-all z-20 hidden">
+                <video id="local-video" autoplay playsinline muted class="w-full h-full object-cover"></video>
+                <div class="absolute bottom-1 left-1 bg-black/60 backdrop-blur-xs px-1.5 py-0.5 rounded text-[10px] text-white font-medium">You</div>
+            </div>
+        </div>
+
+        <!-- Floating Call Controls Toolbar -->
+        <div class="flex items-center justify-center gap-3 md:gap-4 py-2 z-10">
+            <!-- Mute / Unmute Mic -->
+            <button id="call-toggle-mic-btn" type="button" class="btn btn-circle btn-neutral btn-md shadow-md" title="Mute Microphone">
+                <svg id="call-mic-on-icon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+                <svg id="call-mic-off-icon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-error hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                </svg>
+            </button>
+
+            <!-- Turn Camera On / Off -->
+            <button id="call-toggle-cam-btn" type="button" class="btn btn-circle btn-neutral btn-md shadow-md" title="Turn Camera On/Off">
+                <svg id="call-cam-on-icon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <svg id="call-cam-off-icon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-error hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                </svg>
+            </button>
+
+            <!-- Screen Share -->
+            <button id="call-share-screen-btn" type="button" class="btn btn-circle btn-neutral btn-md shadow-md" title="Share Screen">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+            </button>
+
+            <!-- End Call (Hang up) -->
+            <button id="call-end-btn" type="button" class="btn btn-error btn-circle btn-md md:btn-lg shadow-xl" title="End call">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white transform rotate-[135deg]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- 7. Toast Notification Stack -->
     <div id="toast-container" class="toast toast-bottom toast-end z-50 pointer-events-none"></div>
 </body>
 

@@ -190,3 +190,89 @@
     opacity: 1;
     font-weight: bold;
 }
+
+/* Voice Note Recording Waveform Animation */
+.voice-wave-bar {
+    display: inline-block;
+    width: 2.5px;
+    height: 100%;
+    background-color: hsl(var(--er));
+    border-radius: 9999px;
+    animation: voice-wave 0.8s ease-in-out infinite alternate;
+}
+.voice-wave-bar:nth-child(2) { animation-delay: 0.15s; }
+.voice-wave-bar:nth-child(3) { animation-delay: 0.3s; }
+.voice-wave-bar:nth-child(4) { animation-delay: 0.45s; }
+.voice-wave-bar:nth-child(5) { animation-delay: 0.6s; }
+
+@keyframes voice-wave {
+    0% { transform: scaleY(0.25); }
+    100% { transform: scaleY(1); }
+}
+
+/* Active Call Concentric Audio Pulse Rings */
+.call-pulse-ring {
+    position: absolute;
+    inset: -12px;
+    border-radius: 9999px;
+    border: 2px solid hsl(var(--p));
+    opacity: 0.7;
+    animation: call-pulse 2.2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    pointer-events: none;
+}
+.call-pulse-ring-1 { animation-delay: 0s; }
+.call-pulse-ring-2 { animation-delay: 0.7s; }
+.call-pulse-ring-3 { animation-delay: 1.4s; }
+
+@keyframes call-pulse {
+    0% {
+        transform: scale(0.85);
+        opacity: 0.9;
+    }
+    100% {
+        transform: scale(1.65);
+        opacity: 0;
+    }
+}
+
+/* WhatsApp-Style Voice Note Bubble */
+.voice-note-bubble {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-width: 220px;
+    max-width: 320px;
+}
+
+.voice-note-scrubber {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    border-radius: 2px;
+    background: hsla(var(--bc) / 0.2);
+    outline: none;
+    cursor: pointer;
+    flex: 1;
+    transition: background 0.15s ease;
+}
+
+.voice-note-scrubber::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: hsl(var(--p));
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.voice-note-scrubber::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: hsl(var(--p));
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
