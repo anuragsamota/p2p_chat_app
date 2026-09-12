@@ -3,59 +3,365 @@
 
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Chat App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>PeerWave - Secure P2P Chat</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="./style.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@4.4.19/dist/full.min.css" />
-    <script defer src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
+    <!-- PeerJS for WebRTC signaling -->
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <!-- QRCode generator for instant mobile joining -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script defer src="./script.js"></script>
 </head>
 
-<body>
-    <div class="h-screen p-4 flex flex-col overflow-y-hidden">
-        <div class="flex flex-col border-b-2 border-accent pb-2">
-            <div class="flex flex-row justify-between">
-                <div class="flex flex-col">
-                    <span class="mt-1 text-2xl mr-3" id="self-conn-status">Initializing...</span>
-                    <span class="text-lg" id="conn-id"></span>
-                    <button class="btn btn-primary" disabled id="copy-btn">Copy Id</button>
-                </div>
-                <div id="join-peers" class="flex flex-row space-x-4">
-                    <input id="peers-id-inp" type="text" placeholder="Enter ID" class="input input-bordered input-primary w-auto" />
-                    <button id="join-peer-btn" class="btn btn-primary w-20">Join</button>
-                    <input type="checkbox" value="forest" class="toggle theme-controller"/>
+<body class="bg-base-300 text-base-content antialiased select-none md:select-auto">
+    <div class="h-dvh flex flex-col overflow-hidden">
+        <!-- Top Navbar -->
+        <header class="navbar bg-base-200 border-b border-base-300 px-3 md:px-6 min-h-14 z-30 flex-shrink-0 shadow-sm">
+            <div class="navbar-start gap-2">
+                <!-- Mobile Sidebar Drawer Toggle Button -->
+                <button id="mobile-menu-btn" class="btn btn-ghost btn-circle btn-sm md:hidden" aria-label="Toggle peer list">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                </button>
+
+                <!-- App Logo & Branding -->
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-primary to-secondary flex items-center justify-center text-primary-content shadow">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M17 6.1H3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.1a2 2 0 0 0-2-2Z" />
+                            <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+                        </svg>
+                    </div>
+                    <div class="flex flex-col">
+                        <span class="font-bold tracking-tight text-base leading-none flex items-center gap-1.5">
+                            PeerWave
+                            <span class="badge badge-primary badge-xs font-mono">P2P</span>
+                        </span>
+                        <span class="text-[11px] text-base-content/60 hidden sm:inline leading-tight">Direct WebRTC Mesh</span>
+                    </div>
                 </div>
             </div>
-        </div>
-        <div class="flex flex-row flex-auto mt-4 space-x-2">
-            <div id="connected-peers" class="flex flex-col basis-1/3 border border-primary rounded-xl maxw p-2 text-center text-lg">
-                Connected peers appear here
-            </div>
-            <div class="p-2 flex flex-col justify-between flex-auto border border-primary rounded-xl">
-                <div id="chat-div" class="h1 rounded-lg flex flex-col space-y-4 p-4 overflow-y-auto content-evenly scrollbar-w-2 scrollbar-track scrollbar-thumb scrollbar-thumb-rounded">
+
+            <!-- Navbar Center: Connection Status Badge -->
+            <div class="navbar-center">
+                <div id="conn-status-pill" class="badge badge-ghost gap-1.5 py-3 px-3 border border-base-content/10">
+                    <span id="conn-status-indicator" class="w-2.5 h-2.5 rounded-full bg-warning animate-pulse"></span>
+                    <span id="conn-status-text" class="text-xs font-semibold tracking-wide">Connecting...</span>
                 </div>
-                <div class="border-t-2 border-accent px-4 pt-4 mb-2 sm:mb-0">
-                    <div class="relative flex">
-                        <input id="msg-inp" type="text" placeholder="Write your message!"
-                            class="input input-bordered input-secondary w-full"/>
-                        <div class="absolute right-0 items-center inset-y-0">
-                            <button id="send-msg-btn" type="button"
-                                class="btn btn-outline rounded-s-none btn-secondary">
-                                <span class="font-bold">Send</span>
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
-                                    class="h-6 w-6 ml-2 transform rotate-90">
-                                    <path
-                                        d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z">
-                                    </path>
+            </div>
+
+            <!-- Navbar End: Peer Count, Sound, Theme, Profile -->
+            <div class="navbar-end gap-1 sm:gap-2">
+                <!-- Connected Peers Badge -->
+                <div class="badge badge-neutral gap-1 text-xs py-2.5 hidden sm:inline-flex" title="Connected Peers">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                    <span id="peer-count-text">0 connected</span>
+                </div>
+
+                <!-- Sound Alert Toggle -->
+                <button id="sound-toggle-btn" class="btn btn-ghost btn-circle btn-sm" title="Toggle audio alert" aria-label="Toggle sound">
+                    <svg id="sound-on-icon" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                    </svg>
+                    <svg id="sound-off-icon" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 hidden opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                    </svg>
+                </button>
+
+                <!-- Theme Switcher Dropdown -->
+                <div class="dropdown dropdown-end">
+                    <button tabindex="0" class="btn btn-ghost btn-circle btn-sm" title="Select Theme" aria-label="Theme selector">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4 4 4 0 014-4c.72 0 1.39.2 1.97.54C9.52 11.23 11.08 10 13 10c2.21 0 4 1.79 4 4 0 .39-.06.77-.16 1.13A4 4 0 0121 17a4 4 0 01-4 4H7z" />
+                        </svg>
+                    </button>
+                    <ul tabindex="0" class="dropdown-content menu p-2 shadow-2xl bg-base-200 rounded-box w-40 z-50 text-xs border border-base-content/10 mt-1">
+                        <li><button class="theme-select-btn" data-theme="night">🌙 Night (Default)</button></li>
+                        <li><button class="theme-select-btn" data-theme="dark">🌑 Dark</button></li>
+                        <li><button class="theme-select-btn" data-theme="synthwave">🌆 Synthwave</button></li>
+                        <li><button class="theme-select-btn" data-theme="cyberpunk">⚡ Cyberpunk</button></li>
+                        <li><button class="theme-select-btn" data-theme="forest">🌲 Forest</button></li>
+                        <li><button class="theme-select-btn" data-theme="aqua">🌊 Aqua</button></li>
+                        <li><button class="theme-select-btn" data-theme="cupcake">🧁 Cupcake</button></li>
+                    </ul>
+                </div>
+
+                <!-- User Profile Pill / Button -->
+                <button id="profile-edit-btn" class="btn btn-ghost btn-sm px-2 gap-2 flex items-center border border-base-content/10" title="Edit your profile">
+                    <div id="user-avatar-pill" class="w-6 h-6 rounded-full bg-primary text-primary-content flex items-center justify-center text-xs font-bold shadow-sm">
+                        U
+                    </div>
+                    <span id="user-name-display" class="font-medium text-xs max-w-[80px] sm:max-w-[100px] truncate">User</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Workspace: Split View (Sidebar + Chat Area) -->
+        <div class="flex flex-1 min-h-0 relative overflow-hidden">
+            <!-- Mobile Drawer Backdrop -->
+            <div id="sidebar-backdrop" class="fixed inset-0 drawer-backdrop z-40 hidden md:hidden"></div>
+
+            <!-- Sidebar (Desktop persistent, Mobile slide-over drawer) -->
+            <aside id="sidebar-panel" class="fixed md:static inset-y-0 left-0 z-40 w-80 md:w-80 lg:w-96 bg-base-200 border-r border-base-300 flex flex-col transform -translate-x-full md:translate-x-0 transition-transform duration-200 ease-in-out h-full shadow-xl md:shadow-none">
+                <!-- Sidebar Header (Mobile close button) -->
+                <div class="p-3 border-b border-base-300 flex items-center justify-between md:hidden">
+                    <span class="font-semibold text-sm">Connection & Peers</span>
+                    <button id="sidebar-close-btn" class="btn btn-ghost btn-circle btn-xs">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Sidebar Scrollable Content -->
+                <div class="flex-1 overflow-y-auto p-3 space-y-4">
+                    <!-- Your Peer ID Card -->
+                    <div class="card bg-base-100 shadow-sm border border-base-300 p-3.5">
+                        <div class="flex items-center justify-between mb-1.5">
+                            <span class="text-xs font-semibold text-base-content/70 uppercase tracking-wider">Your Peer ID</span>
+                            <span id="my-peer-status" class="badge badge-xs badge-warning">connecting</span>
+                        </div>
+                        <div class="relative bg-base-200 rounded-lg p-2 font-mono text-xs break-all border border-base-300 select-all mb-3 text-base-content/90 font-medium">
+                            <span id="conn-id">Generating ID...</span>
+                        </div>
+                        <!-- ID Action Buttons -->
+                        <div class="grid grid-cols-3 gap-1.5">
+                            <button id="copy-btn" class="btn btn-primary btn-xs gap-1" disabled title="Copy your Peer ID">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                                 </svg>
+                                <span>Copy ID</span>
+                            </button>
+                            <button id="share-link-btn" class="btn btn-secondary btn-outline btn-xs gap-1" disabled title="Copy shareable invite link">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                </svg>
+                                <span>Invite</span>
+                            </button>
+                            <button id="show-qr-btn" class="btn btn-ghost btn-xs border border-base-300 gap-1" disabled title="Show QR Code">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                                </svg>
+                                <span>QR Code</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Connect to Peer Card -->
+                    <div class="card bg-base-100 shadow-sm border border-base-300 p-3.5">
+                        <span class="text-xs font-semibold text-base-content/70 uppercase tracking-wider mb-2">Connect to a Peer</span>
+                        <form id="connect-form" class="flex flex-col gap-2">
+                            <div class="relative">
+                                <input id="peers-id-inp" type="text" placeholder="Enter Peer ID or paste link..." class="input input-bordered input-sm w-full font-mono text-xs pr-8" required />
+                                <button type="button" id="paste-id-btn" class="absolute right-2 top-1.5 text-base-content/50 hover:text-base-content" title="Paste from clipboard">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <button id="join-peer-btn" type="submit" class="btn btn-primary btn-sm w-full gap-2">
+                                <span id="join-btn-spinner" class="loading loading-spinner loading-xs hidden"></span>
+                                <span id="join-btn-text">Connect to Peer</span>
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Connected Peers List Section -->
+                    <div class="flex flex-col flex-1">
+                        <div class="flex items-center justify-between mb-2 px-1">
+                            <span class="text-xs font-semibold text-base-content/70 uppercase tracking-wider">Active Peers</span>
+                            <span id="active-peers-pill" class="badge badge-xs badge-neutral font-mono">0</span>
+                        </div>
+                        <div id="connected-peers" class="space-y-2 min-h-[100px]">
+                            <!-- Empty state placeholder -->
+                            <div id="no-peers-placeholder" class="card bg-base-100/50 border border-dashed border-base-300 p-4 text-center">
+                                <div class="text-base-content/40 flex justify-center mb-1">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                    </svg>
+                                </div>
+                                <p class="text-xs text-base-content/60 font-medium">No peers connected</p>
+                                <p class="text-[11px] text-base-content/40 mt-1">Share your Peer ID or link to start a mesh conversation.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sidebar Footer: Room & History Actions -->
+                <div class="p-3 border-t border-base-300 bg-base-200/50 flex gap-2">
+                    <button id="export-chat-btn" class="btn btn-ghost btn-xs flex-1 border border-base-300 gap-1" title="Download chat history as text file">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        <span>Export Chat</span>
+                    </button>
+                    <button id="clear-chat-btn" class="btn btn-ghost btn-xs text-error border border-error/20 gap-1 hover:bg-error hover:text-error-content" title="Clear chat messages">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        <span>Clear</span>
+                    </button>
+                </div>
+            </aside>
+
+            <!-- Main Chat View Area -->
+            <main class="flex-1 flex flex-col min-w-0 bg-base-100 relative h-full">
+                <!-- Dropzone Overlay for Drag & Drop Files -->
+                <div id="file-dropzone" class="absolute inset-0 z-30 bg-base-100/90 backdrop-blur-sm border-4 border-dashed border-primary rounded-xl flex flex-col items-center justify-center gap-3 hidden transition-all">
+                    <div class="w-16 h-16 rounded-full bg-primary/20 text-primary flex items-center justify-center animate-bounce">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                    </div>
+                    <span class="text-base font-semibold">Drop file to share with peers</span>
+                    <span class="text-xs text-base-content/60">Transferred directly peer-to-peer via WebRTC</span>
+                </div>
+
+                <!-- Chat Messages Scroll Container -->
+                <div id="chat-div" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+                    <!-- Welcoming Empty State -->
+                    <div id="empty-chat-state" class="flex flex-col items-center justify-center h-full text-center max-w-md mx-auto py-12 px-4">
+                        <div class="w-16 h-16 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mb-4">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-bold">Welcome to PeerWave</h3>
+                        <p class="text-xs text-base-content/70 mt-1 leading-relaxed">
+                            Private, direct WebRTC peer-to-peer chat. Your messages and files are transmitted directly between browsers with zero central storage.
+                        </p>
+                        <div class="mt-4 flex flex-wrap gap-2 justify-center">
+                            <button id="empty-invite-btn" class="btn btn-primary btn-sm gap-1.5 shadow-sm">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                                </svg>
+                                Copy Invite Link
                             </button>
                         </div>
                     </div>
                 </div>
-            </div>
+
+                <!-- Floating Scroll to Bottom Button -->
+                <button id="scroll-bottom-btn" class="btn btn-circle btn-sm btn-primary shadow-lg absolute bottom-20 right-6 z-20 hidden" aria-label="Scroll to bottom">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                    </svg>
+                </button>
+
+                <!-- Typing Status Banner -->
+                <div id="typing-indicator" class="px-4 py-1 text-xs text-base-content/60 flex items-center gap-1.5 min-h-[24px] transition-opacity">
+                    <!-- Populated dynamically via JS -->
+                </div>
+
+                <!-- Chat Input Section -->
+                <footer class="p-3 md:p-4 bg-base-200/80 border-t border-base-300 flex-shrink-0">
+                    <!-- Pending File Attachment Preview Pill -->
+                    <div id="file-preview-bar" class="hidden mb-2 items-center justify-between bg-base-100 rounded-lg p-2 border border-base-300 text-xs">
+                        <div class="flex items-center gap-2 truncate">
+                            <span class="badge badge-primary badge-sm">File</span>
+                            <span id="file-preview-name" class="font-medium truncate">document.pdf</span>
+                            <span id="file-preview-size" class="text-base-content/50">(24 KB)</span>
+                        </div>
+                        <button id="file-cancel-btn" class="btn btn-ghost btn-circle btn-xs text-error">✕</button>
+                    </div>
+
+                    <!-- Input Controls -->
+                    <div class="flex items-center gap-2">
+                        <!-- Hidden file input -->
+                        <input type="file" id="file-inp" class="hidden" />
+
+                        <!-- File attachment button -->
+                        <button id="attach-file-btn" class="btn btn-ghost btn-circle btn-sm md:btn-md" title="Attach file or photo" aria-label="Attach file">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-base-content/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                            </svg>
+                        </button>
+
+                        <!-- Main text input -->
+                        <div class="flex-1 relative">
+                            <input id="msg-inp" type="text" placeholder="Type a message (Press Enter to send)..." class="input input-bordered input-md w-full text-sm bg-base-100 focus:outline-primary pr-10" autocomplete="off" />
+                        </div>
+
+                        <!-- Send Button -->
+                        <button id="send-msg-btn" class="btn btn-primary btn-circle btn-sm md:btn-md shadow" title="Send Message" aria-label="Send message">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 transform rotate-90" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                            </svg>
+                        </button>
+                    </div>
+                </footer>
+            </main>
         </div>
     </div>
+
+    <!-- Modals -->
+    <!-- 1. QR Code Modal -->
+    <dialog id="qr-modal" class="modal">
+        <div class="modal-box max-w-sm text-center">
+            <h3 class="font-bold text-base mb-1">Scan to Join Chat</h3>
+            <p class="text-xs text-base-content/60 mb-4">Scan this QR code with a mobile camera to connect directly.</p>
+            <div id="qrcode-container" class="bg-white p-4 rounded-xl inline-block shadow-inner mx-auto mb-4 min-h-[200px] min-w-[200px] flex items-center justify-center">
+                <!-- QR Code rendered here -->
+            </div>
+            <div class="modal-action justify-center">
+                <form method="dialog">
+                    <button class="btn btn-sm btn-ghost">Close</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <!-- 2. Edit Profile Modal -->
+    <dialog id="profile-modal" class="modal">
+        <div class="modal-box max-w-sm">
+            <h3 class="font-bold text-base mb-2">Edit Display Name</h3>
+            <p class="text-xs text-base-content/60 mb-4">Choose the name other peers will see in chat.</p>
+            <form id="profile-form" class="space-y-4">
+                <div class="form-control">
+                    <input id="profile-name-inp" type="text" maxlength="30" class="input input-bordered w-full text-sm" placeholder="Your name" required />
+                </div>
+                <div class="modal-action">
+                    <button type="button" id="profile-cancel-btn" class="btn btn-sm btn-ghost">Cancel</button>
+                    <button type="submit" class="btn btn-sm btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <!-- 3. Image Lightbox Modal -->
+    <dialog id="image-modal" class="modal">
+        <div class="modal-box max-w-3xl p-2 bg-base-300">
+            <div class="flex justify-end p-1">
+                <form method="dialog">
+                    <button class="btn btn-circle btn-xs btn-ghost">✕</button>
+                </form>
+            </div>
+            <div class="flex items-center justify-center p-2">
+                <img id="modal-image-preview" src="" alt="Shared attachment" class="max-h-[80vh] rounded-lg object-contain" />
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <!-- 4. Toast Notification Stack -->
+    <div id="toast-container" class="toast toast-bottom toast-end z-50 pointer-events-none"></div>
 </body>
 
 </html>
