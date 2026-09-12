@@ -187,7 +187,8 @@ const state = {
     activeCall: null,
     incomingCall: null,
     callAudioInterval: null,
-    voiceRecorder: null
+    voiceRecorder: null,
+    pendingDeleteMessageId: null
 };
 
 Storage.saveProfile(state.user);
@@ -209,8 +210,10 @@ const DOM = {
     syncNowHeaderBtn: document.getElementById('sync-now-header-btn'),
 
     // Dropdown Menu Items
+    menuSettingsBtn: document.getElementById('menu-settings-btn'),
     menuEditProfileBtn: document.getElementById('menu-edit-profile-btn'),
     menuBackupBtn: document.getElementById('menu-backup-btn'),
+    menuDeleteChatBtn: document.getElementById('menu-delete-chat-btn'),
     menuPwaInstallItem: document.getElementById('menu-pwa-install-item'),
     pwaInstallBtn: document.getElementById('pwa-install-btn'),
     soundToggleBtn: document.getElementById('sound-toggle-btn'),
@@ -218,7 +221,7 @@ const DOM = {
     soundOffIcon: document.getElementById('sound-off-icon'),
     soundStatusPill: document.getElementById('sound-status-pill'),
 
-    // Self Profile in Sidebar
+    // Self Profile (Settings Panel & Sidebar)
     selfSidebarAvatar: document.getElementById('self-sidebar-avatar'),
     selfSidebarName: document.getElementById('self-sidebar-name'),
     selfSidebarBio: document.getElementById('self-sidebar-bio'),
@@ -228,6 +231,11 @@ const DOM = {
     sidebarPanel: document.getElementById('sidebar-panel'),
     sidebarBackdrop: document.getElementById('sidebar-backdrop'),
     sidebarCloseBtn: document.getElementById('sidebar-close-btn'),
+    sidebarTotalChatsBadge: document.getElementById('sidebar-total-chats-badge'),
+    sidebarSettingsBtn: document.getElementById('sidebar-settings-btn'),
+    sidebarSearchInp: document.getElementById('sidebar-search-inp'),
+
+    // Connection Info & Connect Form (Inside Settings Modal)
     connId: document.getElementById('conn-id'),
     myPeerStatus: document.getElementById('my-peer-status'),
     copyBtn: document.getElementById('copy-btn'),
@@ -252,10 +260,11 @@ const DOM = {
     noPeersPlaceholder: document.getElementById('no-peers-placeholder'),
     noContactsPlaceholder: document.getElementById('no-contacts-placeholder'),
 
-    // Sidebar Footer
+    // Backup, Export & Danger Zone Controls (Inside Settings Modal)
     exportChatBtn: document.getElementById('export-chat-btn'),
     syncNowBtn: document.getElementById('sync-now-btn'),
     clearChatBtn: document.getElementById('clear-chat-btn'),
+    resetAllDataBtn: document.getElementById('reset-all-data-btn'),
 
     // Main Chat
     chatDiv: document.getElementById('chat-div'),
@@ -284,16 +293,39 @@ const DOM = {
     // Modals
     qrModal: document.getElementById('qr-modal'),
     qrcodeContainer: document.getElementById('qrcode-container'),
-    profileModal: document.getElementById('profile-modal'),
+
+    // Consolidated Settings Modal
+    settingsModal: document.getElementById('settings-modal'),
+    settingsTabProfile: document.getElementById('settings-tab-profile'),
+    settingsTabConn: document.getElementById('settings-tab-conn'),
+    settingsTabData: document.getElementById('settings-tab-data'),
+    settingsTabDanger: document.getElementById('settings-tab-danger'),
+    settingsPanelProfile: document.getElementById('settings-panel-profile'),
+    settingsPanelConn: document.getElementById('settings-panel-conn'),
+    settingsPanelData: document.getElementById('settings-panel-data'),
+    settingsPanelDanger: document.getElementById('settings-panel-danger'),
+
+    profileModal: document.getElementById('settings-modal'),
     profileForm: document.getElementById('profile-form'),
     profileNameInp: document.getElementById('profile-name-inp'),
     profileBioInp: document.getElementById('profile-bio-inp'),
     profileCancelBtn: document.getElementById('profile-cancel-btn'),
-    backupModal: document.getElementById('backup-modal'),
+    backupModal: document.getElementById('settings-modal'),
     exportBackupBtn: document.getElementById('export-backup-btn'),
     importBackupFile: document.getElementById('import-backup-file'),
     importBackupBtn: document.getElementById('import-backup-btn'),
     modalSyncBtn: document.getElementById('modal-sync-btn'),
+
+    // Deletion Modals
+    deleteMessageModal: document.getElementById('delete-message-modal'),
+    deleteMsgSnippet: document.getElementById('delete-msg-snippet'),
+    deleteForEveryoneBtn: document.getElementById('delete-for-everyone-btn'),
+    deleteForMeBtn: document.getElementById('delete-for-me-btn'),
+    confirmDeleteChatModal: document.getElementById('confirm-delete-chat-modal'),
+    confirmDeleteChatSubtitle: document.getElementById('confirm-delete-chat-subtitle'),
+    confirmDeleteChatBtn: document.getElementById('confirm-delete-chat-btn'),
+    confirmResetAppModal: document.getElementById('confirm-reset-app-modal'),
+    confirmResetAppBtn: document.getElementById('confirm-reset-app-btn'),
 
     // Media Modal
     mediaModal: document.getElementById('media-modal'),
@@ -334,8 +366,25 @@ const DOM = {
     callToggleCamBtn: document.getElementById('call-toggle-cam-btn'),
     callCamOnIcon: document.getElementById('call-cam-on-icon'),
     callCamOffIcon: document.getElementById('call-cam-off-icon'),
+    callFlipCamBtn: document.getElementById('call-flip-cam-btn'),
     callShareScreenBtn: document.getElementById('call-share-screen-btn'),
     callEndBtn: document.getElementById('call-end-btn'),
+    remoteAudio: document.getElementById('remote-audio'),
+
+    // No Peer Call Modal
+    noPeerCallModal: document.getElementById('no-peer-call-modal'),
+    noPeerShareBtn: document.getElementById('no-peer-share-btn'),
+    noPeerQrBtn: document.getElementById('no-peer-qr-btn'),
+    noPeerOpenDrawerBtn: document.getElementById('no-peer-open-drawer-btn'),
+
+    // Media Permissions Guidance Modal
+    mediaPermissionModal: document.getElementById('media-permission-modal'),
+    mediaPermSubtitle: document.getElementById('media-perm-subtitle'),
+    mediaPermInsecureSection: document.getElementById('media-perm-insecure-section'),
+    mediaPermOriginBadge: document.getElementById('media-perm-origin-badge'),
+    mediaPermOriginInput: document.getElementById('media-perm-origin-input'),
+    mediaPermCopyOriginBtn: document.getElementById('media-perm-copy-origin-btn'),
+    mediaPermDeniedSection: document.getElementById('media-perm-denied-section'),
 
     // Toasts
     toastContainer: document.getElementById('toast-container')
@@ -1248,7 +1297,12 @@ function handleIncomingData(senderId, data) {
             break;
 
         case 'REACTION':
-            handleIncomingReaction(data.messageId, data.emoji, senderName);
+        case 'REACTION_TOGGLE':
+            handleIncomingReactionToggle(data);
+            break;
+
+        case 'DELETE_MESSAGE':
+            handleIncomingDeleteMessage(data.messageId);
             break;
 
         default:
@@ -1583,14 +1637,20 @@ function renderChatMessage(msg, shouldScroll = true) {
             <div class="chat-text-content select-text">${escapeHtml(msg.text)}</div>
             <div class="reactions-wrapper flex flex-wrap gap-1 mt-1 empty:hidden"></div>
         </div>
-        <div class="chat-footer opacity-0 group-hover:opacity-100 transition-opacity mt-1 flex items-center gap-1">
+        <div class="chat-footer opacity-80 md:opacity-0 md:group-hover:opacity-100 transition-opacity mt-1 flex items-center gap-1">
             <button class="btn btn-ghost btn-circle btn-xs hover:bg-base-200" onclick="toggleReactionPicker('${msg.id}')" title="React with emoji">
                 <span class="text-xs">😀</span>
+            </button>
+            <button class="btn btn-ghost btn-circle btn-xs hover:bg-base-200 text-error/70 hover:text-error" onclick="promptDeleteMessage('${msg.id}')" title="Delete message">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
             </button>
         </div>
     `;
 
     DOM.chatDiv.appendChild(msgElement);
+    renderMessageReactions(msg.id);
     if (shouldScroll) smartScrollToBottom();
 }
 
@@ -1791,9 +1851,20 @@ function renderFileMessage(msg, shouldScroll = true) {
             </div>
             <div class="reactions-wrapper flex flex-wrap gap-1 mt-1 empty:hidden"></div>
         </div>
+        <div class="chat-footer opacity-80 md:opacity-0 md:group-hover:opacity-100 transition-opacity mt-1 flex items-center gap-1">
+            <button class="btn btn-ghost btn-circle btn-xs hover:bg-base-200" onclick="toggleReactionPicker('${msg.id}')" title="React with emoji">
+                <span class="text-xs">😀</span>
+            </button>
+            <button class="btn btn-ghost btn-circle btn-xs hover:bg-base-200 text-error/70 hover:text-error" onclick="promptDeleteMessage('${msg.id}')" title="Delete message">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+            </button>
+        </div>
     `;
 
     DOM.chatDiv.appendChild(msgElement);
+    renderMessageReactions(msg.id);
     if (shouldScroll) smartScrollToBottom();
 }
 
@@ -1881,14 +1952,20 @@ function renderVoiceNoteMessage(msg, shouldScroll = true) {
             </div>
             <div class="reactions-wrapper flex flex-wrap gap-1 mt-1 empty:hidden"></div>
         </div>
-        <div class="chat-footer opacity-0 group-hover:opacity-100 transition-opacity mt-1 flex items-center gap-1">
+        <div class="chat-footer opacity-80 md:opacity-0 md:group-hover:opacity-100 transition-opacity mt-1 flex items-center gap-1">
             <button class="btn btn-ghost btn-circle btn-xs hover:bg-base-200" onclick="toggleReactionPicker('${msg.id}')" title="React with emoji">
                 <span class="text-xs">😀</span>
+            </button>
+            <button class="btn btn-ghost btn-circle btn-xs hover:bg-base-200 text-error/70 hover:text-error" onclick="promptDeleteMessage('${msg.id}')" title="Delete message">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
             </button>
         </div>
     `;
 
     DOM.chatDiv.appendChild(msgElement);
+    renderMessageReactions(msg.id);
     attachVoiceNoteListeners(msg.id, duration);
     if (shouldScroll) smartScrollToBottom();
 }
@@ -1972,9 +2049,49 @@ function restoreChatFromStorage() {
     smartScrollToBottom();
 }
 
-// Reactions handling
+// ==========================================
+// 19. Reactions & Deletion Systems
+// ==========================================
+
+function renderMessageReactions(messageId) {
+    const msgCard = DOM.chatDiv.querySelector(`[data-message-id="${messageId}"]`);
+    if (!msgCard) return;
+
+    const reactionsWrapper = msgCard.querySelector('.reactions-wrapper');
+    if (!reactionsWrapper) return;
+
+    reactionsWrapper.innerHTML = '';
+    const msg = state.messages.find(m => m.id === messageId);
+    if (!msg || !msg.reactions) return;
+
+    Object.entries(msg.reactions).forEach(([emoji, userList]) => {
+        if (!Array.isArray(userList) || userList.length === 0) return;
+        const count = userList.length;
+        const hasReacted = userList.includes(state.user.userId);
+
+        const badge = document.createElement('button');
+        badge.type = 'button';
+        badge.className = `badge badge-xs gap-1 py-1 px-2 border cursor-pointer select-none transition-all hover:scale-105 active:scale-95 ${
+            hasReacted
+                ? 'badge-primary reaction-badge-active font-semibold'
+                : 'bg-base-300/80 border-base-content/20 text-base-content/80'
+        }`;
+        badge.dataset.emoji = emoji;
+        badge.title = hasReacted ? `You reacted with ${emoji} (Click to remove)` : `React with ${emoji}`;
+        badge.innerHTML = `<span>${emoji}</span> <span class="reaction-count text-[10px] font-bold">${count}</span>`;
+        badge.onclick = (e) => {
+            e.stopPropagation();
+            sendReactionToggle(messageId, emoji);
+        };
+        reactionsWrapper.appendChild(badge);
+    });
+}
+
+// Reactions Toggle (Selecting same emoji removes it)
 window.toggleReactionPicker = function(messageId) {
     const emojis = ['👍', '❤️', '😂', '🎉', '🔥', '🚀'];
+    const msg = state.messages.find(m => m.id === messageId);
+
     const picker = document.createElement('div');
     picker.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-[1px]';
     picker.onclick = (e) => {
@@ -1985,11 +2102,15 @@ window.toggleReactionPicker = function(messageId) {
     box.className = 'bg-base-200 p-2 rounded-2xl shadow-xl border border-base-300 flex gap-2 animate-message';
 
     emojis.forEach((emoji) => {
+        const hasReacted = msg && msg.reactions && Array.isArray(msg.reactions[emoji]) && msg.reactions[emoji].includes(state.user.userId);
+
         const btn = document.createElement('button');
-        btn.className = 'btn btn-ghost btn-circle btn-sm hover:scale-125 transition-transform text-base';
+        btn.type = 'button';
+        btn.className = `btn btn-ghost btn-circle btn-sm hover:scale-125 transition-transform text-base ${hasReacted ? 'bg-primary/20 ring-2 ring-primary' : ''}`;
         btn.innerText = emoji;
+        btn.title = hasReacted ? `Remove ${emoji} reaction` : `React with ${emoji}`;
         btn.onclick = () => {
-            sendReaction(messageId, emoji);
+            sendReactionToggle(messageId, emoji);
             picker.remove();
         };
         box.appendChild(btn);
@@ -1999,41 +2120,225 @@ window.toggleReactionPicker = function(messageId) {
     document.body.appendChild(picker);
 };
 
-function sendReaction(messageId, emoji) {
+window.sendReactionToggle = function(messageId, emoji) {
     const msg = state.messages.find(m => m.id === messageId);
     if (!msg) return;
 
+    if (!msg.reactions || typeof msg.reactions !== 'object') {
+        msg.reactions = {};
+    }
+    if (!Array.isArray(msg.reactions[emoji])) {
+        msg.reactions[emoji] = [];
+    }
+
+    let action = 'add';
+    if (msg.reactions[emoji].includes(state.user.userId)) {
+        // Toggle off: remove user reaction
+        msg.reactions[emoji] = msg.reactions[emoji].filter(id => id !== state.user.userId);
+        if (msg.reactions[emoji].length === 0) {
+            delete msg.reactions[emoji];
+        }
+        action = 'remove';
+        showToast(`Reaction ${emoji} removed`, 'info');
+    } else {
+        // Toggle on: add user reaction
+        msg.reactions[emoji].push(state.user.userId);
+        action = 'add';
+    }
+
     broadcastPayload({
-        type: 'REACTION',
+        type: 'REACTION_TOGGLE',
         messageId: messageId,
-        emoji: emoji
+        emoji: emoji,
+        userId: state.user.userId,
+        userName: state.user.name,
+        action: action
     });
 
-    applyReactionToUI(messageId, emoji, state.user.name);
-}
+    Storage.saveChatHistory(state.messages);
+    renderMessageReactions(messageId);
+};
 
-function handleIncomingReaction(messageId, emoji, senderName) {
-    applyReactionToUI(messageId, emoji, senderName);
-}
+window.sendReaction = function(messageId, emoji) {
+    sendReactionToggle(messageId, emoji);
+};
 
-function applyReactionToUI(messageId, emoji, senderName) {
-    const msgCard = DOM.chatDiv.querySelector(`[data-message-id="${messageId}"]`);
-    if (!msgCard) return;
+function handleIncomingReactionToggle(data) {
+    const { messageId, emoji, userId, action } = data;
+    const msg = state.messages.find(m => m.id === messageId);
+    if (!msg) return;
 
-    const reactionsWrapper = msgCard.querySelector('.reactions-wrapper');
-    if (!reactionsWrapper) return;
+    if (!msg.reactions || typeof msg.reactions !== 'object') {
+        msg.reactions = {};
+    }
+    if (!Array.isArray(msg.reactions[emoji])) {
+        msg.reactions[emoji] = [];
+    }
 
-    let existingBadge = reactionsWrapper.querySelector(`[data-emoji="${emoji}"]`);
-    if (existingBadge) {
-        const countSpan = existingBadge.querySelector('.reaction-count');
-        const currentCount = parseInt(countSpan.innerText, 10) || 1;
-        countSpan.innerText = currentCount + 1;
+    const effectiveUserId = userId || 'remote_peer';
+
+    if (action === 'remove') {
+        msg.reactions[emoji] = msg.reactions[emoji].filter(id => id !== effectiveUserId);
+        if (msg.reactions[emoji].length === 0) {
+            delete msg.reactions[emoji];
+        }
     } else {
-        const badge = document.createElement('span');
-        badge.className = 'badge badge-xs bg-base-300 border border-base-content/20 gap-1 py-1.5 px-2 cursor-pointer hover:scale-105 transition-transform';
-        badge.dataset.emoji = emoji;
-        badge.innerHTML = `<span>${emoji}</span> <span class="reaction-count text-[10px] font-bold">1</span>`;
-        reactionsWrapper.appendChild(badge);
+        if (!msg.reactions[emoji].includes(effectiveUserId)) {
+            msg.reactions[emoji].push(effectiveUserId);
+        }
+    }
+
+    Storage.saveChatHistory(state.messages);
+    renderMessageReactions(messageId);
+}
+
+// Per-Message Deletion (Delete for me vs Delete for everyone)
+window.promptDeleteMessage = function(messageId) {
+    const msg = state.messages.find(m => m.id === messageId);
+    if (!msg) return;
+
+    state.pendingDeleteMessageId = messageId;
+
+    if (DOM.deleteMsgSnippet) {
+        let snippet = msg.text || msg.fileName || (msg.type === 'VOICE_NOTE' ? 'Voice Message' : 'Attachment');
+        if (snippet.length > 35) snippet = snippet.slice(0, 32) + '...';
+        DOM.deleteMsgSnippet.innerText = `"${snippet}"`;
+    }
+
+    if (DOM.deleteForEveryoneBtn) {
+        if (msg.isSelf) {
+            DOM.deleteForEveryoneBtn.classList.remove('hidden');
+        } else {
+            DOM.deleteForEveryoneBtn.classList.add('hidden');
+        }
+    }
+
+    if (DOM.deleteMessageModal) {
+        DOM.deleteMessageModal.showModal();
+    }
+};
+
+function deleteMessageLocally(messageId) {
+    const msgEl = DOM.chatDiv.querySelector(`[data-message-id="${messageId}"]`);
+    if (msgEl) {
+        msgEl.classList.add('message-deleting');
+        setTimeout(() => {
+            msgEl.remove();
+            if (state.messages.length === 0 && DOM.emptyChatState) {
+                DOM.emptyChatState.classList.remove('hidden');
+                DOM.chatDiv.appendChild(DOM.emptyChatState);
+            }
+        }, 280);
+    }
+
+    state.messages = state.messages.filter(m => m.id !== messageId);
+    Storage.saveChatHistory(state.messages);
+}
+
+function deleteMessageForEveryone(messageId) {
+    broadcastPayload({
+        type: 'DELETE_MESSAGE',
+        messageId: messageId
+    });
+
+    deleteMessageLocally(messageId);
+    showToast('Message deleted for everyone', 'info');
+}
+
+function handleIncomingDeleteMessage(messageId) {
+    deleteMessageLocally(messageId);
+    showToast('A message was deleted by sender', 'info');
+}
+
+// Per-Chat Deletion & Reset App
+window.promptDeleteActiveChat = function() {
+    if (DOM.confirmDeleteChatModal) {
+        DOM.confirmDeleteChatModal.showModal();
+    }
+};
+
+function confirmDeleteChat() {
+    state.messages = [];
+    state.lastRenderedDate = null;
+    Storage.saveChatHistory([]);
+
+    DOM.chatDiv.innerHTML = '';
+    if (DOM.emptyChatState) {
+        DOM.emptyChatState.classList.remove('hidden');
+        DOM.chatDiv.appendChild(DOM.emptyChatState);
+    }
+
+    if (DOM.confirmDeleteChatModal) {
+        DOM.confirmDeleteChatModal.close();
+    }
+
+    showToast('Chat history cleared', 'info');
+}
+
+function confirmResetApp() {
+    try {
+        localStorage.removeItem('peerwave_user_profile');
+        localStorage.removeItem(CONFIG.STORAGE_KEYS.PROFILE);
+        localStorage.removeItem(CONFIG.STORAGE_KEYS.SETTINGS);
+        localStorage.removeItem(CONFIG.STORAGE_KEYS.CHAT);
+        localStorage.removeItem(CONFIG.STORAGE_KEYS.CONTACTS);
+        localStorage.removeItem(CONFIG.STORAGE_KEYS.PERSISTENT_PEER_ID);
+        localStorage.removeItem('peerwave_username');
+    } catch (e) {
+        console.error('Error clearing storage:', e);
+    }
+    window.location.reload();
+}
+
+// Settings Modal Navigation & Tab Switching
+window.switchSettingsTab = function(tabName) {
+    const tabs = {
+        profile: { tab: DOM.settingsTabProfile, panel: DOM.settingsPanelProfile },
+        conn: { tab: DOM.settingsTabConn, panel: DOM.settingsPanelConn },
+        data: { tab: DOM.settingsTabData, panel: DOM.settingsPanelData },
+        danger: { tab: DOM.settingsTabDanger, panel: DOM.settingsPanelDanger }
+    };
+
+    Object.keys(tabs).forEach(key => {
+        const item = tabs[key];
+        if (!item.tab || !item.panel) return;
+        if (key === tabName) {
+            item.tab.classList.add('tab-active');
+            item.panel.classList.remove('hidden');
+        } else {
+            item.tab.classList.remove('tab-active');
+            item.panel.classList.add('hidden');
+        }
+    });
+};
+
+window.openSettingsModal = function(tabName = 'profile') {
+    if (DOM.settingsModal) {
+        if (DOM.profileNameInp) DOM.profileNameInp.value = state.user.name;
+        if (DOM.profileBioInp) DOM.profileBioInp.value = state.user.bio || '';
+        switchSettingsTab(tabName);
+        DOM.settingsModal.showModal();
+    }
+};
+
+// Sidebar Real-Time Search Filter
+function filterSidebar(query) {
+    query = (query || '').toLowerCase().trim();
+
+    const peerItems = DOM.connectedPeers.children;
+    for (let i = 0; i < peerItems.length; i++) {
+        const item = peerItems[i];
+        if (item.id === 'no-peers-placeholder') continue;
+        const text = item.textContent.toLowerCase();
+        item.style.display = (!query || text.includes(query)) ? '' : 'none';
+    }
+
+    const contactItems = DOM.savedContactsList.children;
+    for (let i = 0; i < contactItems.length; i++) {
+        const item = contactItems[i];
+        if (item.id === 'no-contacts-placeholder') continue;
+        const text = item.textContent.toLowerCase();
+        item.style.display = (!query || text.includes(query)) ? '' : 'none';
     }
 }
 
@@ -2126,6 +2431,7 @@ function renderPeersList() {
     const count = state.peers.size;
 
     if (DOM.activeTabBadge) DOM.activeTabBadge.innerText = count;
+    if (DOM.sidebarTotalChatsBadge) DOM.sidebarTotalChatsBadge.innerText = count;
     updateHeaderPeerInfo();
 
     if (count === 0) {
@@ -2678,6 +2984,11 @@ async function startVoiceRecording() {
     if (state.voiceRecorder) return;
     initAudio();
 
+    if (!isSecureMediaContext() || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        showMediaPermissionGuide('insecure');
+        return;
+    }
+
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         let options = { mimeType: 'audio/webm;codecs=opus' };
@@ -2722,7 +3033,11 @@ async function startVoiceRecording() {
         showToast('Recording voice note...', 'info', 1800);
     } catch (err) {
         console.error('Failed to access microphone:', err);
-        showToast('Microphone access denied or unavailable.', 'error');
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            showMediaPermissionGuide('denied');
+        } else {
+            showToast('Microphone access denied or unavailable.', 'error');
+        }
     }
 }
 
@@ -2793,6 +3108,85 @@ function sendVoiceRecording() {
 // ==========================================
 let isCallMinimized = false;
 
+function isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+}
+
+function isSecureMediaContext() {
+    if (window.isSecureContext) return true;
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') return true;
+    return false;
+}
+
+function showMediaPermissionGuide(reason = 'insecure') {
+    if (!DOM.mediaPermissionModal) return;
+
+    if (DOM.mediaPermOriginBadge) {
+        DOM.mediaPermOriginBadge.innerText = window.location.origin;
+    }
+    if (DOM.mediaPermOriginInput) {
+        DOM.mediaPermOriginInput.value = window.location.origin;
+    }
+
+    if (reason === 'insecure' || !isSecureMediaContext() || !navigator.mediaDevices) {
+        if (DOM.mediaPermInsecureSection) DOM.mediaPermInsecureSection.classList.remove('hidden');
+        if (DOM.mediaPermDeniedSection) DOM.mediaPermDeniedSection.classList.add('hidden');
+        if (DOM.mediaPermSubtitle) DOM.mediaPermSubtitle.innerText = 'Mobile Browser Insecure Origin Limitation';
+    } else {
+        if (DOM.mediaPermInsecureSection) DOM.mediaPermInsecureSection.classList.add('hidden');
+        if (DOM.mediaPermDeniedSection) DOM.mediaPermDeniedSection.classList.remove('hidden');
+        if (DOM.mediaPermSubtitle) DOM.mediaPermSubtitle.innerText = 'Permission Blocked in Browser Settings';
+    }
+
+    DOM.mediaPermissionModal.showModal();
+}
+
+async function requestUserMedia(callType = 'voice', facingMode = 'user') {
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        const legacyGetUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
+        if (legacyGetUserMedia) {
+            return new Promise((resolve, reject) => {
+                const constraints = {
+                    audio: true,
+                    video: callType === 'video'
+                };
+                legacyGetUserMedia.call(navigator, constraints, resolve, reject);
+            });
+        }
+        throw new Error('MEDIA_DEVICES_UNSUPPORTED');
+    }
+
+    if (callType === 'voice') {
+        return await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    }
+
+    // Video call: Try Tier 1 with facingMode and ideal mobile resolution
+    try {
+        return await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: {
+                facingMode: facingMode,
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        });
+    } catch (e1) {
+        console.warn('Tier 1 getUserMedia failed, trying Tier 2 (facingMode only):', e1);
+        try {
+            return await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: { facingMode: facingMode }
+            });
+        } catch (e2) {
+            console.warn('Tier 2 getUserMedia failed, trying Tier 3 (basic video):', e2);
+            return await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: true
+            });
+        }
+    }
+}
+
 function toggleMinimizeCall() {
     isCallMinimized = !isCallMinimized;
     if (isCallMinimized) {
@@ -2822,26 +3216,59 @@ function openActiveCallUI(peer, callType, isIncoming) {
     DOM.callToggleCamBtn.classList.remove('btn-error');
     DOM.localVideoPip.classList.remove('opacity-30');
 
+    const isMobile = isMobileDevice();
+
     if (callType === 'video') {
         DOM.callToggleCamBtn.classList.remove('hidden');
-        DOM.callShareScreenBtn.classList.remove('hidden');
+        if (DOM.callFlipCamBtn) {
+            DOM.callFlipCamBtn.classList.remove('hidden');
+        }
+        if (DOM.callShareScreenBtn) {
+            if (isMobile || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+                DOM.callShareScreenBtn.classList.add('hidden');
+            } else {
+                DOM.callShareScreenBtn.classList.remove('hidden');
+            }
+        }
     } else {
         DOM.callToggleCamBtn.classList.add('hidden');
-        DOM.callShareScreenBtn.classList.add('hidden');
+        if (DOM.callFlipCamBtn) DOM.callFlipCamBtn.classList.add('hidden');
+        if (DOM.callShareScreenBtn) DOM.callShareScreenBtn.classList.add('hidden');
     }
 
     DOM.activeCallOverlay.classList.remove('hidden');
+    DOM.activeCallOverlay.style.display = 'flex';
 }
 
 async function startCall(callType = 'voice') {
     initAudio();
+
     if (state.activeCall) {
         showToast('A call is already in progress.', 'warning');
         return;
     }
+
+    // Immediate visual touch feedback on the header button
+    const btn = callType === 'video' ? DOM.videoCallHeaderBtn : DOM.voiceCallHeaderBtn;
+    if (btn) {
+        btn.classList.add('touch-call-btn-active');
+        setTimeout(() => btn.classList.remove('touch-call-btn-active'), 1200);
+    }
+
+    // Pre-flight check: At least one peer must be connected
     const count = state.peers.size;
     if (count === 0) {
-        showToast('Connect to a peer first to start a call.', 'warning');
+        if (DOM.noPeerCallModal) {
+            DOM.noPeerCallModal.showModal();
+        } else {
+            showToast('Connect to a peer first to start a call.', 'warning');
+        }
+        return;
+    }
+
+    // Pre-flight check: Must be secure context or mediaDevices supported
+    if (!isSecureMediaContext() || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        showMediaPermissionGuide('insecure');
         return;
     }
 
@@ -2849,13 +3276,9 @@ async function startCall(callType = 'voice') {
     if (!targetPeerId) return;
 
     try {
-        showToast(`Starting ${callType} call...`, 'info');
-        const constraints = {
-            audio: true,
-            video: callType === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false
-        };
+        showToast(`Starting ${callType} call...`, 'info', 2000);
 
-        const localStream = await navigator.mediaDevices.getUserMedia(constraints);
+        const localStream = await requestUserMedia(callType, 'user');
 
         openActiveCallUI(targetPeer, callType, false);
         DOM.callStatusText.innerText = `Calling ${targetPeer.name}...`;
@@ -2864,6 +3287,7 @@ async function startCall(callType = 'voice') {
 
         if (callType === 'video') {
             DOM.localVideo.srcObject = localStream;
+            DOM.localVideo.classList.add('video-mirror');
             DOM.localVideoPip.classList.remove('hidden');
         } else {
             DOM.localVideoPip.classList.add('hidden');
@@ -2891,7 +3315,8 @@ async function startCall(callType = 'voice') {
             durationInterval: null,
             isMuted: false,
             isCamOff: false,
-            isScreenSharing: false
+            isScreenSharing: false,
+            facingMode: 'user'
         };
 
         mediaConnection.on('stream', (remoteStream) => {
@@ -2909,9 +3334,17 @@ async function startCall(callType = 'voice') {
 
     } catch (err) {
         console.error('Failed to get user media for call:', err);
-        showToast('Camera or Microphone access denied / unavailable.', 'error');
         stopCallAudio();
         DOM.activeCallOverlay.classList.add('hidden');
+        DOM.activeCallOverlay.style.display = 'none';
+
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            showMediaPermissionGuide('denied');
+        } else if (err.message === 'MEDIA_DEVICES_UNSUPPORTED' || !isSecureMediaContext()) {
+            showMediaPermissionGuide('insecure');
+        } else {
+            showToast(`Camera/mic error: ${err.message || 'Access failed'}`, 'error');
+        }
     }
 }
 
@@ -2961,18 +3394,20 @@ async function acceptIncomingCall() {
     DOM.incomingCallModal.close();
     state.incomingCall = null;
 
-    try {
-        const constraints = {
-            audio: true,
-            video: callType === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false
-        };
+    if (!isSecureMediaContext() || !navigator.mediaDevices) {
+        showMediaPermissionGuide('insecure');
+        mediaConnection.close();
+        return;
+    }
 
-        const localStream = await navigator.mediaDevices.getUserMedia(constraints);
+    try {
+        const localStream = await requestUserMedia(callType, 'user');
 
         openActiveCallUI({ name: callerName, avatarColor: callerAvatarColor }, callType, true);
 
         if (callType === 'video') {
             DOM.localVideo.srcObject = localStream;
+            DOM.localVideo.classList.add('video-mirror');
             DOM.localVideoPip.classList.remove('hidden');
         } else {
             DOM.localVideoPip.classList.add('hidden');
@@ -2991,7 +3426,8 @@ async function acceptIncomingCall() {
             durationInterval: null,
             isMuted: false,
             isCamOff: false,
-            isScreenSharing: false
+            isScreenSharing: false,
+            facingMode: 'user'
         };
 
         mediaConnection.on('stream', (remoteStream) => {
@@ -3009,9 +3445,13 @@ async function acceptIncomingCall() {
 
     } catch (err) {
         console.error('Failed to answer call with media:', err);
-        showToast('Could not access camera/mic to answer.', 'error');
         mediaConnection.close();
         endActiveCall('Permissions denied');
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            showMediaPermissionGuide('denied');
+        } else {
+            showToast('Could not access camera/mic to answer.', 'error');
+        }
     }
 }
 
@@ -3050,10 +3490,17 @@ function handleRemoteCallStream(remoteStream) {
         DOM.callDurationTimer.innerText = formatDuration(elapsedSec);
     }, 1000);
 
+    // Audio stream playback through dedicated HTML5 Audio element
+    if (DOM.remoteAudio) {
+        DOM.remoteAudio.srcObject = remoteStream;
+        DOM.remoteAudio.play().catch(e => console.warn('Remote audio autoplay prevented:', e));
+    }
+
     const hasVideo = remoteStream.getVideoTracks().length > 0 && remoteStream.getVideoTracks()[0].enabled;
     if (hasVideo && state.activeCall.type === 'video') {
         DOM.remoteVideo.srcObject = remoteStream;
         DOM.remoteVideo.classList.remove('hidden');
+        DOM.remoteVideo.play().catch(e => console.warn('Remote video autoplay prevented:', e));
         DOM.callVoiceStage.classList.add('hidden');
     } else {
         DOM.remoteVideo.classList.add('hidden');
@@ -3069,6 +3516,7 @@ function endActiveCall(reason = 'Call ended') {
     stopCallAudio();
     if (!state.activeCall) {
         DOM.activeCallOverlay.classList.add('hidden');
+        DOM.activeCallOverlay.style.display = 'none';
         return;
     }
 
@@ -3086,9 +3534,11 @@ function endActiveCall(reason = 'Call ended') {
         try { mediaConnection.close(); } catch (e) {}
     }
 
+    if (DOM.remoteAudio) DOM.remoteAudio.srcObject = null;
     DOM.remoteVideo.srcObject = null;
     DOM.localVideo.srcObject = null;
     DOM.activeCallOverlay.classList.add('hidden');
+    DOM.activeCallOverlay.style.display = 'none';
 
     const p = state.peers.get(peerId);
     if (p && p.connection && p.connection.open) {
@@ -3151,6 +3601,53 @@ function toggleCallCam() {
     }
 }
 
+async function flipCallCamera() {
+    if (!state.activeCall || state.activeCall.type !== 'video' || !state.activeCall.localStream) return;
+    const currentMode = state.activeCall.facingMode || 'user';
+    const newMode = currentMode === 'user' ? 'environment' : 'user';
+
+    if (DOM.callFlipCamBtn) {
+        DOM.callFlipCamBtn.classList.add('camera-flip-anim');
+        setTimeout(() => DOM.callFlipCamBtn.classList.remove('camera-flip-anim'), 400);
+    }
+
+    try {
+        const oldVideoTrack = state.activeCall.localStream.getVideoTracks()[0];
+        const newStream = await requestUserMedia('video', newMode);
+        const newVideoTrack = newStream.getVideoTracks()[0];
+
+        if (!newVideoTrack) return;
+
+        if (oldVideoTrack) {
+            state.activeCall.localStream.removeTrack(oldVideoTrack);
+            oldVideoTrack.stop();
+        }
+
+        state.activeCall.localStream.addTrack(newVideoTrack);
+        state.activeCall.facingMode = newMode;
+
+        DOM.localVideo.srcObject = state.activeCall.localStream;
+        if (newMode === 'user') {
+            DOM.localVideo.classList.add('video-mirror');
+        } else {
+            DOM.localVideo.classList.remove('video-mirror');
+        }
+
+        if (state.activeCall.mediaConnection && state.activeCall.mediaConnection.peerConnection) {
+            const senders = state.activeCall.mediaConnection.peerConnection.getSenders();
+            const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+            if (videoSender) {
+                await videoSender.replaceTrack(newVideoTrack);
+            }
+        }
+
+        showToast(newMode === 'user' ? 'Front camera' : 'Back camera', 'info', 1200);
+    } catch (err) {
+        console.warn('Failed to flip camera:', err);
+        showToast('Could not switch camera', 'warning');
+    }
+}
+
 async function toggleCallScreenShare() {
     if (!state.activeCall || !state.activeCall.localStream) return;
     try {
@@ -3167,6 +3664,7 @@ async function toggleCallScreenShare() {
             }
 
             DOM.localVideo.srcObject = screenStream;
+            DOM.localVideo.classList.remove('video-mirror');
             state.activeCall.isScreenSharing = true;
             DOM.callShareScreenBtn.classList.add('btn-primary');
 
@@ -3193,6 +3691,9 @@ function revertScreenShare() {
         }
     }
     DOM.localVideo.srcObject = state.activeCall.localStream;
+    if (state.activeCall.facingMode === 'user') {
+        DOM.localVideo.classList.add('video-mirror');
+    }
     state.activeCall.isScreenSharing = false;
     DOM.callShareScreenBtn.classList.remove('btn-primary');
     showToast('Screen sharing stopped', 'info');
@@ -3306,9 +3807,19 @@ function setupEventListeners() {
         });
     }
 
-    // Call header buttons
-    if (DOM.voiceCallHeaderBtn) DOM.voiceCallHeaderBtn.addEventListener('click', () => startCall('voice'));
-    if (DOM.videoCallHeaderBtn) DOM.videoCallHeaderBtn.addEventListener('click', () => startCall('video'));
+    // Call header buttons with stopPropagation for mobile safety
+    if (DOM.voiceCallHeaderBtn) {
+        DOM.voiceCallHeaderBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            startCall('voice');
+        });
+    }
+    if (DOM.videoCallHeaderBtn) {
+        DOM.videoCallHeaderBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            startCall('video');
+        });
+    }
 
     // Incoming Call buttons
     if (DOM.incomingAcceptBtn) DOM.incomingAcceptBtn.addEventListener('click', acceptIncomingCall);
@@ -3323,44 +3834,162 @@ function setupEventListeners() {
     if (DOM.callEndBtn) DOM.callEndBtn.addEventListener('click', () => endActiveCall('Call ended'));
     if (DOM.callToggleMicBtn) DOM.callToggleMicBtn.addEventListener('click', toggleCallMic);
     if (DOM.callToggleCamBtn) DOM.callToggleCamBtn.addEventListener('click', toggleCallCam);
+    if (DOM.callFlipCamBtn) DOM.callFlipCamBtn.addEventListener('click', flipCallCamera);
     if (DOM.callShareScreenBtn) DOM.callShareScreenBtn.addEventListener('click', toggleCallScreenShare);
     if (DOM.callCollapseBtn) DOM.callCollapseBtn.addEventListener('click', toggleMinimizeCall);
+
+    // No Peer Connected Modal controls
+    if (DOM.noPeerShareBtn) {
+        DOM.noPeerShareBtn.addEventListener('click', () => {
+            if (DOM.noPeerCallModal) DOM.noPeerCallModal.close();
+            if (!state.myId) {
+                showToast('Connecting to network...', 'warning');
+                return;
+            }
+            const link = getInviteLink();
+            if (navigator.share) {
+                navigator.share({
+                    title: 'Join PeerWave Chat',
+                    text: `Connect with ${state.user.name} on PeerWave`,
+                    url: link
+                }).catch(() => {});
+            } else {
+                navigator.clipboard.writeText(link).then(() => {
+                    showToast('Invite link copied to clipboard!', 'success');
+                });
+            }
+        });
+    }
+
+    if (DOM.noPeerQrBtn) {
+        DOM.noPeerQrBtn.addEventListener('click', () => {
+            if (DOM.noPeerCallModal) DOM.noPeerCallModal.close();
+            showQRCodeModal();
+        });
+    }
+
+    if (DOM.noPeerOpenDrawerBtn) {
+        DOM.noPeerOpenDrawerBtn.addEventListener('click', () => {
+            if (DOM.noPeerCallModal) DOM.noPeerCallModal.close();
+            openSettingsModal('conn');
+        });
+    }
+
+    // Media Permission Modal controls
+    if (DOM.mediaPermCopyOriginBtn) {
+        DOM.mediaPermCopyOriginBtn.addEventListener('click', () => {
+            const origin = window.location.origin;
+            navigator.clipboard.writeText(origin).then(() => {
+                showToast('Origin URL copied to clipboard!', 'success');
+            }).catch(() => {
+                showToast('Please copy URL manually from input box', 'info');
+            });
+        });
+    }
 
     // Voice Note buttons
     if (DOM.voiceNoteBtn) DOM.voiceNoteBtn.addEventListener('click', startVoiceRecording);
     if (DOM.voiceCancelBtn) DOM.voiceCancelBtn.addEventListener('click', cancelVoiceRecording);
     if (DOM.voiceSendBtn) DOM.voiceSendBtn.addEventListener('click', sendVoiceRecording);
 
-    const openProfileModal = () => {
-        DOM.profileNameInp.value = state.user.name;
-        DOM.profileBioInp.value = state.user.bio || '';
-        DOM.profileModal.showModal();
-    };
+    // Settings Navigation & Triggers
+    if (DOM.sidebarSettingsBtn) {
+        DOM.sidebarSettingsBtn.addEventListener('click', () => openSettingsModal('profile'));
+    }
+    if (DOM.menuSettingsBtn) {
+        DOM.menuSettingsBtn.addEventListener('click', () => openSettingsModal('profile'));
+    }
+    if (DOM.menuEditProfileBtn) {
+        DOM.menuEditProfileBtn.addEventListener('click', () => openSettingsModal('profile'));
+    }
+    if (DOM.selfSidebarEditBtn) {
+        DOM.selfSidebarEditBtn.addEventListener('click', () => openSettingsModal('profile'));
+    }
+    if (DOM.emptyInviteBtn) {
+        DOM.emptyInviteBtn.addEventListener('click', () => openSettingsModal('conn'));
+    }
+    if (DOM.profileForm) {
+        DOM.profileForm.addEventListener('submit', handleSaveProfile);
+    }
+    if (DOM.profileCancelBtn) {
+        DOM.profileCancelBtn.addEventListener('click', () => {
+            if (DOM.settingsModal) DOM.settingsModal.close();
+        });
+    }
 
-    if (DOM.menuEditProfileBtn) DOM.menuEditProfileBtn.addEventListener('click', openProfileModal);
-    if (DOM.selfSidebarEditBtn) DOM.selfSidebarEditBtn.addEventListener('click', openProfileModal);
-    DOM.profileForm.addEventListener('submit', handleSaveProfile);
-    DOM.profileCancelBtn.addEventListener('click', () => DOM.profileModal.close());
-
-    if (DOM.menuBackupBtn) DOM.menuBackupBtn.addEventListener('click', () => DOM.backupModal.showModal());
-    DOM.exportBackupBtn.addEventListener('click', exportFullBackup);
-    DOM.importBackupBtn.addEventListener('click', importFullBackup);
-    DOM.modalSyncBtn.addEventListener('click', () => {
-        triggerMeshSync();
-        DOM.backupModal.close();
-    });
-    DOM.syncNowBtn.addEventListener('click', triggerMeshSync);
+    // Backups & Sync Triggers
+    if (DOM.menuBackupBtn) {
+        DOM.menuBackupBtn.addEventListener('click', () => openSettingsModal('data'));
+    }
+    if (DOM.exportBackupBtn) DOM.exportBackupBtn.addEventListener('click', exportFullBackup);
+    if (DOM.importBackupBtn) DOM.importBackupBtn.addEventListener('click', importFullBackup);
+    if (DOM.modalSyncBtn) {
+        DOM.modalSyncBtn.addEventListener('click', () => {
+            triggerMeshSync();
+            if (DOM.settingsModal) DOM.settingsModal.close();
+        });
+    }
+    if (DOM.syncNowBtn) DOM.syncNowBtn.addEventListener('click', triggerMeshSync);
     if (DOM.syncNowHeaderBtn) DOM.syncNowHeaderBtn.addEventListener('click', triggerMeshSync);
 
-    // Stop video when closing media modal
-    DOM.mediaModal.addEventListener('close', () => {
-        DOM.modalVideoPreview.pause();
-        DOM.modalVideoPreview.src = '';
-    });
+    // Deletion Listeners (Per-Message & Per-Chat & Reset Everything)
+    if (DOM.menuDeleteChatBtn) {
+        DOM.menuDeleteChatBtn.addEventListener('click', promptDeleteActiveChat);
+    }
+    if (DOM.clearChatBtn) {
+        DOM.clearChatBtn.addEventListener('click', () => {
+            if (DOM.settingsModal) DOM.settingsModal.close();
+            promptDeleteActiveChat();
+        });
+    }
+    if (DOM.confirmDeleteChatBtn) {
+        DOM.confirmDeleteChatBtn.addEventListener('click', confirmDeleteChat);
+    }
 
-    DOM.soundToggleBtn.addEventListener('click', toggleSound);
-    DOM.exportChatBtn.addEventListener('click', exportChatHistory);
-    DOM.clearChatBtn.addEventListener('click', clearChat);
+    if (DOM.deleteForEveryoneBtn) {
+        DOM.deleteForEveryoneBtn.addEventListener('click', () => {
+            if (state.pendingDeleteMessageId) {
+                deleteMessageForEveryone(state.pendingDeleteMessageId);
+                state.pendingDeleteMessageId = null;
+            }
+            if (DOM.deleteMessageModal) DOM.deleteMessageModal.close();
+        });
+    }
+    if (DOM.deleteForMeBtn) {
+        DOM.deleteForMeBtn.addEventListener('click', () => {
+            if (state.pendingDeleteMessageId) {
+                deleteMessageLocally(state.pendingDeleteMessageId);
+                state.pendingDeleteMessageId = null;
+            }
+            if (DOM.deleteMessageModal) DOM.deleteMessageModal.close();
+        });
+    }
+
+    if (DOM.resetAllDataBtn) {
+        DOM.resetAllDataBtn.addEventListener('click', () => {
+            if (DOM.settingsModal) DOM.settingsModal.close();
+            if (DOM.confirmResetAppModal) DOM.confirmResetAppModal.showModal();
+        });
+    }
+    if (DOM.confirmResetAppBtn) {
+        DOM.confirmResetAppBtn.addEventListener('click', confirmResetApp);
+    }
+
+    // Real-Time Sidebar Search
+    if (DOM.sidebarSearchInp) {
+        DOM.sidebarSearchInp.addEventListener('input', (e) => filterSidebar(e.target.value));
+    }
+
+    // Stop video when closing media modal
+    if (DOM.mediaModal) {
+        DOM.mediaModal.addEventListener('close', () => {
+            DOM.modalVideoPreview.pause();
+            DOM.modalVideoPreview.src = '';
+        });
+    }
+
+    if (DOM.soundToggleBtn) DOM.soundToggleBtn.addEventListener('click', toggleSound);
+    if (DOM.exportChatBtn) DOM.exportChatBtn.addEventListener('click', exportChatHistory);
 }
 
 // ==========================================

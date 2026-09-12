@@ -276,3 +276,72 @@
     border: none;
     box-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
+
+/* Mobile Call Touch Button & Animation */
+.touch-call-btn-active {
+    animation: call-btn-pulse 1.2s infinite alternate;
+}
+
+@keyframes call-btn-pulse {
+    0% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(1.15); opacity: 0.8; }
+}
+
+/* Local Video Selfie Mirroring */
+.video-mirror {
+    transform: scaleX(-1);
+}
+
+/* Camera Flip Icon Spin Animation */
+.camera-flip-anim {
+    animation: flip-spin 0.4s ease-in-out;
+}
+
+@keyframes flip-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(180deg); }
+}
+
+/* Active Reaction Badge (User has reacted) */
+.reaction-badge-active {
+    border-color: hsl(var(--p)) !important;
+    background-color: hsla(var(--p) / 0.22) !important;
+    color: hsl(var(--pc)) !important;
+    box-shadow: 0 0 0 1px hsl(var(--p) / 0.4);
+}
+
+/* Smooth message delete animation */
+@keyframes message-fade-out {
+    0% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+        max-height: 200px;
+        margin-bottom: 1rem;
+    }
+    60% {
+        opacity: 0;
+        transform: scale(0.85) translateY(-8px);
+    }
+    100% {
+        opacity: 0;
+        transform: scale(0.7) translateY(-14px);
+        max-height: 0;
+        margin-bottom: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+        overflow: hidden;
+    }
+}
+
+.message-deleting {
+    animation: message-fade-out 0.28s cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
+    pointer-events: none;
+}
+
+/* Mobile & Touch chat footer button visibility */
+@media (max-width: 768px) {
+    .chat-footer {
+        opacity: 0.8 !important;
+    }
+}
+
