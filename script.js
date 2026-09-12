@@ -1,6 +1,17 @@
 /**
- * PeerWave - Modern P2P WebRTC Chat Application
- * PeerJS Mesh Architecture with Structured Messaging, File Transfer, and Real-time Presence
+ * PeerWave - Enterprise P2P WebRTC Chat Application
+ * Features:
+ * - Dual-Layer Persistent Identity (Static Peer ID + Permanent User ID across sessions)
+ * - 5GB+ Streaming File Transfers with Flow Control & Real-time Progress (Speed, ETA, Bytes)
+ * - Rich Inline Media Previews (HTML5 Video player, Audio player, Image viewer)
+ * - Universal Media Lightbox Modal (Images & Videos)
+ * - Delivery Receipts (✓ Sent, ✓✓ Delivered) & Chat Date Dividers
+ * - Quick Emoji Toolbar
+ * - LocalStorage Chat, Contacts, Settings & Profile Persistence
+ * - Online Status, Periodic Heartbeats & Last-Seen Tracking
+ * - Mesh Chat Synchronization on Connection/Reconnect
+ * - Full JSON Backup Export and Import
+ * - Progressive Web App (PWA) with Service Worker
  */
 
 // ==========================================
@@ -15,47 +26,169 @@ const CONFIG = {
         { urls: 'stun:stun4.l.google.com:19302' }
     ],
     STORAGE_KEYS: {
-        USERNAME: 'peerwave_username',
-        THEME: 'peerwave_theme',
-        SOUND: 'peerwave_sound_enabled'
+        PROFILE: 'peerwave_profile',
+        SETTINGS: 'peerwave_settings',
+        CHAT: 'peerwave_chat_history',
+        CONTACTS: 'peerwave_contacts',
+        PERSISTENT_PEER_ID: 'peerwave_persistent_peer_id'
     },
-    MAX_FILE_SIZE_MB: 20, // WebRTC DataChannel limit recommendation
-    DEFAULT_THEME: 'night'
+    CHUNK_SIZE: 64 * 1024, // 64 KB binary chunks
+    MAX_FILE_SIZE_BYTES: 5 * 1024 * 1024 * 1024, // 5 GB
+    DEFAULT_THEME: 'night',
+    HEARTBEAT_INTERVAL_MS: 12000
 };
 
 const AVATAR_COLORS = [
-    '#3b82f6', '#10b981', '#f59e0b', '#ef4444', 
+    '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
     '#8b5cf6', '#ec4899', '#06b6d4', '#14b8a6'
 ];
 
 // ==========================================
-// 2. Application State
+// 2. Storage Service (Persistent Store)
+// ==========================================
+const Storage = {
+    getProfile() {
+        try {
+            const data = localStorage.getItem(CONFIG.STORAGE_KEYS.PROFILE);
+            if (data) {
+                const parsed = JSON.parse(data);
+                if (!parsed.userId) {
+                    parsed.userId = 'usr_' + generateUUID();
+                    this.saveProfile(parsed);
+                }
+                return parsed;
+            }
+        } catch (e) {
+            console.error('Error reading profile from storage:', e);
+        }
+        return {
+            userId: 'usr_' + generateUUID(),
+            name: generateDefaultUsername(),
+            avatarColor: getRandomColor(),
+            bio: 'Available for P2P messaging',
+            createdAt: Date.now()
+        };
+    },
+    saveProfile(profile) {
+        try {
+            localStorage.setItem(CONFIG.STORAGE_KEYS.PROFILE, JSON.stringify(profile));
+        } catch (e) {
+            console.error('Error saving profile to storage:', e);
+        }
+    },
+    getPersistentPeerId() {
+        let id = localStorage.getItem(CONFIG.STORAGE_KEYS.PERSISTENT_PEER_ID);
+        if (!id) {
+            id = 'pw_' + Math.random().toString(36).substring(2, 10);
+            localStorage.setItem(CONFIG.STORAGE_KEYS.PERSISTENT_PEER_ID, id);
+        }
+        return id;
+    },
+    getSettings() {
+        try {
+            const data = localStorage.getItem(CONFIG.STORAGE_KEYS.SETTINGS);
+            if (data) return JSON.parse(data);
+        } catch (e) {
+            console.error('Error reading settings:', e);
+        }
+        return {
+            theme: CONFIG.DEFAULT_THEME,
+            soundEnabled: true,
+            autoReconnect: true
+        };
+    },
+    saveSettings(settings) {
+        try {
+            localStorage.setItem(CONFIG.STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+        } catch (e) {
+            console.error('Error saving settings:', e);
+        }
+    },
+    getChatHistory() {
+        try {
+            const data = localStorage.getItem(CONFIG.STORAGE_KEYS.CHAT);
+            if (data) return JSON.parse(data);
+        } catch (e) {
+            console.error('Error reading chat from storage:', e);
+        }
+        return [];
+    },
+    saveChatHistory(messages) {
+        try {
+            const sanitized = messages.slice(-500).map(m => {
+                if (m.type === 'FILE' || m.fileName) {
+                    return {
+                        id: m.id,
+                        type: 'FILE',
+                        isSelf: m.isSelf,
+                        senderId: m.senderId,
+                        senderUserId: m.senderUserId,
+                        senderName: m.senderName,
+                        avatarColor: m.avatarColor,
+                        fileName: m.fileName,
+                        fileType: m.fileType,
+                        fileSize: m.fileSize,
+                        timestamp: m.timestamp,
+                        delivered: m.delivered || false,
+                        reactions: m.reactions || {}
+                    };
+                }
+                return m;
+            });
+            localStorage.setItem(CONFIG.STORAGE_KEYS.CHAT, JSON.stringify(sanitized));
+        } catch (e) {
+            console.warn('LocalStorage quota reached or storage failed:', e);
+        }
+    },
+    getContacts() {
+        try {
+            const data = localStorage.getItem(CONFIG.STORAGE_KEYS.CONTACTS);
+            if (data) return JSON.parse(data);
+        } catch (e) {
+            console.error('Error reading contacts from storage:', e);
+        }
+        return [];
+    },
+    saveContacts(contacts) {
+        try {
+            localStorage.setItem(CONFIG.STORAGE_KEYS.CONTACTS, JSON.stringify(contacts));
+        } catch (e) {
+            console.error('Error saving contacts:', e);
+        }
+    }
+};
+
+// ==========================================
+// 3. Application State
 // ==========================================
 const state = {
     peer: null,
     myId: null,
-    user: {
-        name: localStorage.getItem(CONFIG.STORAGE_KEYS.USERNAME) || generateDefaultUsername(),
-        avatarColor: getRandomColor()
-    },
-    // Map of peerId -> { connection, name, avatarColor, isTyping }
-    peers: new Map(),
-    // Message history
-    messages: [],
+    user: Storage.getProfile(),
+    settings: Storage.getSettings(),
+    peers: new Map(), // Active connections: peerId -> { connection, userId, name, avatarColor, bio, isTyping }
+    contacts: Storage.getContacts(), // Persistent contacts: [{ id, userId, name, avatarColor, bio, lastSeen, isOnline }]
+    messages: Storage.getChatHistory(),
+    transfers: new Map(), // Streaming transfers
     pendingFile: null,
-    soundEnabled: localStorage.getItem(CONFIG.STORAGE_KEYS.SOUND) !== 'false',
     localTypingTimeout: null,
-    audioCtx: null
+    audioCtx: null,
+    activeTab: 'active',
+    lastRenderedDate: null
 };
 
+Storage.saveProfile(state.user);
+Storage.saveSettings(state.settings);
+
 // ==========================================
-// 3. DOM Elements
+// 4. DOM Elements
 // ==========================================
 const DOM = {
     // Navbar
     connStatusIndicator: document.getElementById('conn-status-indicator'),
     connStatusText: document.getElementById('conn-status-text'),
     peerCountText: document.getElementById('peer-count-text'),
+    backupModalBtn: document.getElementById('backup-modal-btn'),
     soundToggleBtn: document.getElementById('sound-toggle-btn'),
     soundOnIcon: document.getElementById('sound-on-icon'),
     soundOffIcon: document.getElementById('sound-off-icon'),
@@ -63,6 +196,7 @@ const DOM = {
     userAvatarPill: document.getElementById('user-avatar-pill'),
     userNameDisplay: document.getElementById('user-name-display'),
     mobileMenuBtn: document.getElementById('mobile-menu-btn'),
+    pwaInstallBtn: document.getElementById('pwa-install-btn'),
 
     // Sidebar & Drawer
     sidebarPanel: document.getElementById('sidebar-panel'),
@@ -79,10 +213,22 @@ const DOM = {
     joinPeerBtn: document.getElementById('join-peer-btn'),
     joinBtnSpinner: document.getElementById('join-btn-spinner'),
     joinBtnText: document.getElementById('join-btn-text'),
+
+    // Tabs & Lists
+    tabBtnActive: document.getElementById('tab-btn-active'),
+    tabBtnContacts: document.getElementById('tab-btn-contacts'),
+    activeTabBadge: document.getElementById('active-tab-badge'),
+    contactsTabBadge: document.getElementById('contacts-tab-badge'),
+    activePeersContainer: document.getElementById('active-peers-container'),
+    savedContactsContainer: document.getElementById('saved-contacts-container'),
     connectedPeers: document.getElementById('connected-peers'),
+    savedContactsList: document.getElementById('saved-contacts-list'),
     noPeersPlaceholder: document.getElementById('no-peers-placeholder'),
-    activePeersPill: document.getElementById('active-peers-pill'),
+    noContactsPlaceholder: document.getElementById('no-contacts-placeholder'),
+
+    // Sidebar Footer
     exportChatBtn: document.getElementById('export-chat-btn'),
+    syncNowBtn: document.getElementById('sync-now-btn'),
     clearChatBtn: document.getElementById('clear-chat-btn'),
 
     // Main Chat
@@ -93,11 +239,12 @@ const DOM = {
     typingIndicator: document.getElementById('typing-indicator'),
     fileDropzone: document.getElementById('file-dropzone'),
 
-    // Input Bar
+    // Input Bar & Quick Emoji
     filePreviewBar: document.getElementById('file-preview-bar'),
     filePreviewName: document.getElementById('file-preview-name'),
     filePreviewSize: document.getElementById('file-preview-size'),
     fileCancelBtn: document.getElementById('file-cancel-btn'),
+    quickEmojiBar: document.getElementById('quick-emoji-bar'),
     fileInput: document.getElementById('file-inp'),
     attachFileBtn: document.getElementById('attach-file-btn'),
     messageInput: document.getElementById('msg-inp'),
@@ -109,16 +256,29 @@ const DOM = {
     profileModal: document.getElementById('profile-modal'),
     profileForm: document.getElementById('profile-form'),
     profileNameInp: document.getElementById('profile-name-inp'),
+    profileBioInp: document.getElementById('profile-bio-inp'),
     profileCancelBtn: document.getElementById('profile-cancel-btn'),
-    imageModal: document.getElementById('image-modal'),
+    backupModal: document.getElementById('backup-modal'),
+    exportBackupBtn: document.getElementById('export-backup-btn'),
+    importBackupFile: document.getElementById('import-backup-file'),
+    importBackupBtn: document.getElementById('import-backup-btn'),
+    modalSyncBtn: document.getElementById('modal-sync-btn'),
+
+    // Media Modal
+    mediaModal: document.getElementById('media-modal'),
+    mediaModalBadge: document.getElementById('media-modal-badge'),
+    mediaModalTitle: document.getElementById('media-modal-title'),
+    mediaModalDownload: document.getElementById('media-modal-download'),
+    mediaModalCloseBtn: document.getElementById('media-modal-close-btn'),
     modalImagePreview: document.getElementById('modal-image-preview'),
+    modalVideoPreview: document.getElementById('modal-video-preview'),
 
     // Toasts
     toastContainer: document.getElementById('toast-container')
 };
 
 // ==========================================
-// 4. Utility Functions
+// 5. Utility Functions
 // ==========================================
 function generateDefaultUsername() {
     const adjectives = ['Swift', 'Bright', 'Cosmic', 'Silent', 'Cyber', 'Neon', 'Echo', 'Solar'];
@@ -143,19 +303,64 @@ function getInitials(name) {
 }
 
 function formatTime(timestamp) {
+    if (!timestamp) return '';
     const date = new Date(timestamp);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function formatDateDivider(timestamp) {
+    const date = new Date(timestamp);
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    if (date.toDateString() === today.toDateString()) {
+        return 'Today';
+    } else if (date.toDateString() === yesterday.toDateString()) {
+        return 'Yesterday';
+    } else {
+        return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    }
+}
+
+function formatLastSeen(timestamp, isOnline) {
+    if (isOnline) {
+        return '<span class="text-success font-medium flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>Online</span>';
+    }
+    if (!timestamp) return '<span class="opacity-50">Never seen</span>';
+
+    const diffMs = Date.now() - timestamp;
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHours = Math.floor(diffMin / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffSec < 60) return 'Last seen just now';
+    if (diffMin < 60) return `Last seen ${diffMin}m ago`;
+    if (diffHours < 24) return `Last seen ${diffHours}h ago`;
+    if (diffDays === 1) return 'Last seen yesterday';
+    return `Last seen ${new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
+}
+
 function formatFileSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-    else return (bytes / 1048576).toFixed(1) + ' MB';
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
+}
+
+function formatETA(seconds) {
+    if (!seconds || seconds <= 0 || !isFinite(seconds)) return 'Calculating...';
+    if (seconds < 60) return `${Math.ceil(seconds)}s`;
+    const mins = Math.floor(seconds / 60);
+    const remSec = Math.ceil(seconds % 60);
+    return `${mins}m ${remSec}s`;
 }
 
 function escapeHtml(str) {
     if (!str) return '';
-    return str
+    return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -168,8 +373,28 @@ function generateUUID() {
     return 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
 }
 
+function arrayBufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+}
+
+function base64ToArrayBuffer(base64) {
+    const binaryString = window.atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+}
+
 // ==========================================
-// 5. Sound Synthesizer (Web Audio API)
+// 6. Audio Synthesizer (Web Audio API)
 // ==========================================
 function initAudio() {
     if (!state.audioCtx) {
@@ -184,7 +409,7 @@ function initAudio() {
 }
 
 function playSound(type = 'message') {
-    if (!state.soundEnabled) return;
+    if (!state.settings.soundEnabled) return;
     try {
         initAudio();
         if (!state.audioCtx) return;
@@ -193,19 +418,17 @@ function playSound(type = 'message') {
         const now = ctx.currentTime;
 
         if (type === 'message') {
-            // Pleasant double chime for incoming message
             const osc1 = ctx.createOscillator();
             const osc2 = ctx.createOscillator();
             const gain = ctx.createGain();
 
             osc1.type = 'sine';
             osc2.type = 'sine';
-
-            osc1.frequency.setValueAtTime(587.33, now); // D5
-            osc1.frequency.exponentialRampToValueAtTime(880, now + 0.15); // A5
+            osc1.frequency.setValueAtTime(587.33, now);
+            osc1.frequency.exponentialRampToValueAtTime(880, now + 0.15);
 
             osc2.frequency.setValueAtTime(880, now + 0.15);
-            osc2.frequency.exponentialRampToValueAtTime(1174.66, now + 0.3); // D6
+            osc2.frequency.exponentialRampToValueAtTime(1174.66, now + 0.3);
 
             gain.gain.setValueAtTime(0.08, now);
             gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
@@ -219,10 +442,8 @@ function playSound(type = 'message') {
             osc2.start(now + 0.15);
             osc2.stop(now + 0.35);
         } else if (type === 'send') {
-            // Soft pop for sent message
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
-
             osc.type = 'sine';
             osc.frequency.setValueAtTime(320, now);
             osc.frequency.exponentialRampToValueAtTime(640, now + 0.08);
@@ -232,35 +453,33 @@ function playSound(type = 'message') {
 
             osc.connect(gain);
             gain.connect(ctx.destination);
-
             osc.start(now);
             osc.stop(now + 0.09);
-        } else if (type === 'join') {
-            // Warm upward chord for peer joined
-            const freqs = [440, 554.37, 659.25]; // A major
+        } else if (type === 'join' || type === 'complete') {
+            const freqs = [440, 554.37, 659.25, 880];
             freqs.forEach((freq, idx) => {
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
                 osc.type = 'triangle';
-                osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+                osc.frequency.setValueAtTime(freq, now + idx * 0.06);
 
-                gain.gain.setValueAtTime(0.06, now + idx * 0.08);
-                gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.25);
+                gain.gain.setValueAtTime(0.05, now + idx * 0.06);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.06 + 0.2);
 
                 osc.connect(gain);
                 gain.connect(ctx.destination);
 
-                osc.start(now + idx * 0.08);
-                osc.stop(now + idx * 0.08 + 0.25);
+                osc.start(now + idx * 0.06);
+                osc.stop(now + idx * 0.06 + 0.2);
             });
         }
     } catch (e) {
-        console.warn('Audio playback error:', e);
+        console.warn('Audio error:', e);
     }
 }
 
 // ==========================================
-// 6. Toast Notifications
+// 7. Toast Notifications
 // ==========================================
 function showToast(message, type = 'info', duration = 3200) {
     const alertColors = {
@@ -272,8 +491,7 @@ function showToast(message, type = 'info', duration = 3200) {
 
     const toast = document.createElement('div');
     toast.className = `alert ${alertColors[type] || 'alert-info'} shadow-lg py-2 px-3 text-xs flex items-center gap-2 pointer-events-auto animate-message max-w-sm`;
-    
-    // Icon
+
     let iconSvg = '';
     if (type === 'success') {
         iconSvg = '<svg class="w-4 h-4 shrink-0 stroke-current" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>';
@@ -295,20 +513,72 @@ function showToast(message, type = 'info', duration = 3200) {
 }
 
 // ==========================================
-// 7. PeerJS Core & WebRTC Mesh Engine
+// 8. Dual-Layer Contact Management
 // ==========================================
-function initializePeer() {
+function upsertContact(peerId, data) {
+    if (!peerId || peerId === state.myId) return;
+
+    // Match by permanent userId FIRST, or fallback to peerId
+    let contact = state.contacts.find(c => (data.userId && c.userId === data.userId) || c.id === peerId);
+
+    if (!contact) {
+        contact = {
+            id: peerId, // current active transport peerId
+            userId: data.userId || ('usr_' + peerId),
+            name: data.name || ('Peer_' + peerId.slice(0, 4)),
+            avatarColor: data.avatarColor || getRandomColor(),
+            bio: data.bio || '',
+            lastSeen: data.lastSeen || Date.now(),
+            isOnline: Boolean(data.isOnline)
+        };
+        state.contacts.push(contact);
+    } else {
+        // Update active transport ID and details
+        contact.id = peerId;
+        if (data.userId) contact.userId = data.userId;
+        if (data.name) contact.name = data.name;
+        if (data.avatarColor) contact.avatarColor = data.avatarColor;
+        if (data.bio !== undefined) contact.bio = data.bio;
+        if (data.lastSeen) contact.lastSeen = data.lastSeen;
+        if (data.isOnline !== undefined) contact.isOnline = data.isOnline;
+    }
+
+    Storage.saveContacts(state.contacts);
+    renderContactsList();
+}
+
+function updateContactOnlineStatus(peerId, isOnline) {
+    const contact = state.contacts.find(c => c.id === peerId);
+    if (contact) {
+        contact.isOnline = isOnline;
+        contact.lastSeen = Date.now();
+        Storage.saveContacts(state.contacts);
+        renderContactsList();
+    }
+}
+
+function removeContact(peerId) {
+    state.contacts = state.contacts.filter(c => c.id !== peerId);
+    Storage.saveContacts(state.contacts);
+    renderContactsList();
+    showToast('Contact removed', 'info');
+}
+
+// ==========================================
+// 9. PeerJS Core & WebRTC Mesh Engine
+// ==========================================
+function initializePeer(preferredId = null) {
     updateConnectionStatus('connecting', 'Connecting...');
-    
+    const peerIdToUse = preferredId || Storage.getPersistentPeerId();
+
     try {
-        state.peer = new Peer({
+        state.peer = new Peer(peerIdToUse, {
             config: {
                 iceServers: CONFIG.ICE_SERVERS
             },
             debug: 1
         });
 
-        // Peer opened and received local ID
         state.peer.on('open', (id) => {
             state.myId = id;
             DOM.connId.innerText = id;
@@ -318,24 +588,25 @@ function initializePeer() {
             updateConnectionStatus('ready', 'Online');
             DOM.myPeerStatus.innerText = 'online';
             DOM.myPeerStatus.className = 'badge badge-xs badge-success';
-            
-            showToast('Connected to P2P network!', 'success');
 
-            // Check if invited via URL query param
+            showToast('Connected to P2P network!', 'success');
+            setupHeartbeat();
             checkForInviteParam();
         });
 
-        // Incoming connection from a remote peer
         state.peer.on('connection', (connection) => {
             handleNewConnection(connection);
         });
 
-        // Peer disconnected from signaling server (can still communicate with existing peers)
         state.peer.on('disconnected', () => {
             updateConnectionStatus('disconnected', 'Reconnecting...');
             DOM.myPeerStatus.innerText = 'reconnecting';
             DOM.myPeerStatus.className = 'badge badge-xs badge-warning';
-            // Attempt auto-reconnect to signaling server
+
+            state.peers.forEach((peer, peerId) => {
+                updateContactOnlineStatus(peerId, false);
+            });
+
             setTimeout(() => {
                 if (state.peer && !state.peer.destroyed) {
                     state.peer.reconnect();
@@ -343,18 +614,20 @@ function initializePeer() {
             }, 3000);
         });
 
-        // Critical error handling
         state.peer.on('error', (err) => {
             console.error('PeerJS error:', err);
             setJoinButtonLoading(false);
-            
-            if (err.type === 'peer-unavailable') {
+
+            if (err.type === 'unavailable-id') {
+                // If persistent ID is currently taken (e.g. multi-tab), append session suffix
+                const fallbackSessionId = Storage.getPersistentPeerId() + '_' + Math.random().toString(36).slice(2, 6);
+                console.log('Static ID in use. Falling back to session ID:', fallbackSessionId);
+                initializePeer(fallbackSessionId);
+            } else if (err.type === 'peer-unavailable') {
                 showToast('Peer not found. Check the ID and try again.', 'error');
-            } else if (err.type === 'unavailable-id') {
-                showToast('Peer ID already in use.', 'error');
             } else if (err.type === 'network' || err.type === 'server-error') {
                 updateConnectionStatus('error', 'Network Error');
-                showToast('Signaling server error. Reconnecting...', 'error');
+                showToast('Signaling server lost. Reconnecting...', 'error');
             } else {
                 showToast(`P2P error: ${err.message || err.type}`, 'error');
             }
@@ -363,7 +636,7 @@ function initializePeer() {
     } catch (err) {
         console.error('Failed to initialize PeerJS:', err);
         updateConnectionStatus('error', 'Init Failed');
-        showToast('WebRTC is not supported or was blocked.', 'error');
+        showToast('WebRTC initialization failed.', 'error');
     }
 }
 
@@ -378,19 +651,15 @@ function updateConnectionStatus(status, text) {
     }
 }
 
-// Connect to an external peer ID
 function connectToRemotePeer(targetId) {
     targetId = targetId.trim();
 
-    // If a full invite link was pasted, extract the ?join= parameter
     if (targetId.includes('?join=')) {
         try {
             const url = new URL(targetId);
             const joinId = url.searchParams.get('join');
             if (joinId) targetId = joinId;
-        } catch (e) {
-            // Not a valid URL, keep as is
-        }
+        } catch (e) {}
     }
 
     if (!targetId) {
@@ -417,12 +686,11 @@ function connectToRemotePeer(targetId) {
 
         handleNewConnection(connection, true);
 
-        // Connection timeout failsafe
         const timeout = setTimeout(() => {
             if (!state.peers.has(targetId) || !state.peers.get(targetId).isOpen) {
                 setJoinButtonLoading(false);
             }
-        }, 8000);
+        }, 9000);
 
         connection.on('open', () => clearTimeout(timeout));
     } catch (err) {
@@ -432,55 +700,64 @@ function connectToRemotePeer(targetId) {
     }
 }
 
-// Attach lifecycle events to a DataConnection
 function handleNewConnection(connection, isInitiator = false) {
     const peerId = connection.peer;
 
-    // Guard against duplicate handling
     if (state.peers.has(peerId) && state.peers.get(peerId).connection === connection) {
         return;
     }
 
     const peerData = {
         connection: connection,
+        userId: null,
         name: 'Peer_' + peerId.slice(0, 4),
         avatarColor: getRandomColor(),
+        bio: '',
         isOpen: false,
         isTyping: false
     };
 
     state.peers.set(peerId, peerData);
 
-    // When connection is opened
     connection.on('open', () => {
         peerData.isOpen = true;
         setJoinButtonLoading(false);
         DOM.peerIdInput.value = '';
 
-        // Handshake: exchange user info
+        // Initial contact record
+        upsertContact(peerId, {
+            name: peerData.name,
+            avatarColor: peerData.avatarColor,
+            isOnline: true,
+            lastSeen: Date.now()
+        });
+
+        // Dual-Layer Handshake: send permanent userId, name, and latestMsgTime
+        const latestTime = getLatestLocalMessageTimestamp();
         sendPayloadToPeer(connection, {
             type: 'HANDSHAKE',
+            userId: state.user.userId,
             name: state.user.name,
-            avatarColor: state.user.avatarColor
+            avatarColor: state.user.avatarColor,
+            bio: state.user.bio || '',
+            latestMsgTime: latestTime
         });
 
         playSound('join');
         showToast(`Connected to ${peerData.name}!`, 'success');
-        addSystemMessage(`${peerData.name} joined the chat`);
+        addSystemMessage(`${peerData.name} joined the mesh`);
         renderPeersList();
+        renderContactsList();
     });
 
-    // When data is received
     connection.on('data', (data) => {
         handleIncomingData(peerId, data);
     });
 
-    // When connection is closed
     connection.on('close', () => {
         cleanupPeer(peerId, `${peerData.name} disconnected`);
     });
 
-    // When connection encounters error
     connection.on('error', (err) => {
         console.warn(`Connection error with ${peerId}:`, err);
         cleanupPeer(peerId, `Lost connection to ${peerData.name}`);
@@ -491,11 +768,14 @@ function cleanupPeer(peerId, reason = '') {
     if (state.peers.has(peerId)) {
         const p = state.peers.get(peerId);
         state.peers.delete(peerId);
+        updateContactOnlineStatus(peerId, false);
+
         if (reason) {
             addSystemMessage(reason);
             showToast(reason, 'info');
         }
         renderPeersList();
+        renderContactsList();
         updateTypingIndicator();
     }
 }
@@ -512,14 +792,13 @@ function setJoinButtonLoading(isLoading) {
     }
 }
 
-// Broadcast payload to all open peer connections
 function broadcastPayload(payload) {
     state.peers.forEach((peer) => {
-        if (peer.isOpen && peer.connection.open) {
+        if (peer.isOpen && peer.connection && peer.connection.open) {
             try {
                 peer.connection.send(payload);
             } catch (err) {
-                console.error(`Failed to send to ${peer.name}:`, err);
+                console.error(`Failed to broadcast to ${peer.name}:`, err);
             }
         }
     });
@@ -536,11 +815,51 @@ function sendPayloadToPeer(connection, payload) {
 }
 
 // ==========================================
-// 8. Message Protocol & Handling
+// 10. Heartbeat & Presence
+// ==========================================
+function setupHeartbeat() {
+    setInterval(() => {
+        if (state.peers.size > 0) {
+            broadcastPayload({
+                type: 'HEARTBEAT',
+                timestamp: Date.now()
+            });
+        }
+    }, CONFIG.HEARTBEAT_INTERVAL_MS);
+}
+
+// ==========================================
+// 11. Mesh Chat Message Synchronization
+// ==========================================
+function getLatestLocalMessageTimestamp() {
+    if (state.messages.length === 0) return 0;
+    return state.messages[state.messages.length - 1].timestamp || 0;
+}
+
+function getMessagesSince(sinceTimestamp) {
+    return state.messages.filter(m => m.timestamp > sinceTimestamp && !m.isSystem);
+}
+
+function triggerMeshSync() {
+    if (state.peers.size === 0) {
+        showToast('No active peers connected to sync with.', 'info');
+        return;
+    }
+
+    const latestTime = getLatestLocalMessageTimestamp();
+    broadcastPayload({
+        type: 'SYNC_REQUEST',
+        sinceTimestamp: latestTime
+    });
+
+    showToast('Sync request sent to mesh...', 'info');
+}
+
+// ==========================================
+// 12. Message Protocol & Handling
 // ==========================================
 function handleIncomingData(senderId, data) {
     if (!data || typeof data !== 'object') {
-        // Fallback for legacy raw string messages
         data = { type: 'CHAT', text: String(data), timestamp: Date.now() };
     }
 
@@ -550,9 +869,85 @@ function handleIncomingData(senderId, data) {
 
     switch (data.type) {
         case 'HANDSHAKE':
+            if (data.userId) peer.userId = data.userId;
             if (data.name) peer.name = data.name;
             if (data.avatarColor) peer.avatarColor = data.avatarColor;
+            if (data.bio) peer.bio = data.bio;
+
+            // Upsert contact matched by userId
+            upsertContact(senderId, {
+                userId: data.userId,
+                name: peer.name,
+                avatarColor: peer.avatarColor,
+                bio: peer.bio,
+                isOnline: true,
+                lastSeen: Date.now()
+            });
+
             renderPeersList();
+            renderContactsList();
+
+            // Sync check
+            if (data.latestMsgTime !== undefined) {
+                const missed = getMessagesSince(data.latestMsgTime);
+                if (missed.length > 0 && peer.connection) {
+                    sendPayloadToPeer(peer.connection, {
+                        type: 'SYNC_OFFER',
+                        messages: missed
+                    });
+                }
+            }
+            break;
+
+        case 'DELIVERY_ACK':
+            if (data.messageId) {
+                const targetMsg = state.messages.find(m => m.id === data.messageId);
+                if (targetMsg) {
+                    targetMsg.delivered = true;
+                    Storage.saveChatHistory(state.messages);
+                    const checkEl = document.getElementById(`delivery-${data.messageId}`);
+                    if (checkEl) {
+                        checkEl.className = 'delivery-check delivered';
+                        checkEl.innerText = '✓✓';
+                    }
+                }
+            }
+            break;
+
+        case 'SYNC_REQUEST':
+            if (peer && peer.connection) {
+                const missed = getMessagesSince(data.sinceTimestamp || 0);
+                if (missed.length > 0) {
+                    sendPayloadToPeer(peer.connection, {
+                        type: 'SYNC_OFFER',
+                        messages: missed
+                    });
+                }
+            }
+            break;
+
+        case 'SYNC_OFFER':
+            if (Array.isArray(data.messages) && data.messages.length > 0) {
+                let addedCount = 0;
+                data.messages.forEach(msg => {
+                    if (!state.messages.some(m => m.id === msg.id)) {
+                        state.messages.push(msg);
+                        addedCount++;
+                        if (msg.type === 'FILE') {
+                            renderFileMessage(msg, false);
+                        } else {
+                            renderChatMessage(msg, false);
+                        }
+                    }
+                });
+
+                if (addedCount > 0) {
+                    state.messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+                    Storage.saveChatHistory(state.messages);
+                    smartScrollToBottom();
+                    showToast(`Synced ${addedCount} messages with ${senderName}!`, 'success');
+                }
+            }
             break;
 
         case 'PROFILE_UPDATE':
@@ -560,44 +955,90 @@ function handleIncomingData(senderId, data) {
                 const oldName = peer.name;
                 peer.name = data.name;
                 if (data.avatarColor) peer.avatarColor = data.avatarColor;
+                if (data.bio !== undefined) peer.bio = data.bio;
+
+                upsertContact(senderId, {
+                    userId: data.userId || peer.userId,
+                    name: peer.name,
+                    avatarColor: peer.avatarColor,
+                    bio: peer.bio,
+                    isOnline: true,
+                    lastSeen: Date.now()
+                });
+
                 renderPeersList();
-                addSystemMessage(`${oldName} changed name to ${data.name}`);
+                renderContactsList();
+                addSystemMessage(`${oldName} updated their profile`);
             }
+            break;
+
+        case 'HEARTBEAT':
+            if (peer) {
+                upsertContact(senderId, { isOnline: true, lastSeen: Date.now() });
+                if (peer.connection) {
+                    sendPayloadToPeer(peer.connection, { type: 'HEARTBEAT_ACK', timestamp: Date.now() });
+                }
+            }
+            break;
+
+        case 'HEARTBEAT_ACK':
+            upsertContact(senderId, { isOnline: true, lastSeen: Date.now() });
             break;
 
         case 'CHAT':
             peer.isTyping = false;
             updateTypingIndicator();
-            appendChatMessage({
+
+            const incomingMsg = {
                 id: data.id || generateUUID(),
                 isSelf: false,
                 senderId: senderId,
+                senderUserId: (peer && peer.userId) || senderId,
                 senderName: senderName,
                 avatarColor: avatarColor,
                 text: data.text,
                 timestamp: data.timestamp || Date.now(),
                 reactions: {}
-            });
+            };
+
+            state.messages.push(incomingMsg);
+            Storage.saveChatHistory(state.messages);
+            renderChatMessage(incomingMsg);
             playSound('message');
+
+            // Send delivery acknowledgment back to sender
+            if (peer && peer.connection) {
+                sendPayloadToPeer(peer.connection, {
+                    type: 'DELIVERY_ACK',
+                    messageId: incomingMsg.id
+                });
+            }
             break;
 
-        case 'FILE':
+        // 5GB Streaming Protocol Packets
+        case 'FILE_START':
             peer.isTyping = false;
             updateTypingIndicator();
-            appendFileMessage({
-                id: data.id || generateUUID(),
-                isSelf: false,
-                senderId: senderId,
-                senderName: senderName,
-                avatarColor: avatarColor,
-                fileName: data.fileName,
-                fileType: data.fileType,
-                fileSize: data.fileSize,
-                fileData: data.fileData,
-                timestamp: data.timestamp || Date.now(),
-                reactions: {}
-            });
-            playSound('message');
+            handleIncomingFileStart(senderId, senderName, avatarColor, data);
+
+            if (peer && peer.connection) {
+                sendPayloadToPeer(peer.connection, {
+                    type: 'DELIVERY_ACK',
+                    messageId: data.fileId
+                });
+            }
+            break;
+
+        case 'FILE_CHUNK':
+            handleIncomingFileChunk(data);
+            break;
+
+        case 'FILE_END':
+            handleIncomingFileEnd(data.fileId);
+            break;
+
+        case 'FILE_CANCEL':
+            handleIncomingFileCancel(data.fileId);
             break;
 
         case 'TYPING':
@@ -610,18 +1051,16 @@ function handleIncomingData(senderId, data) {
             break;
 
         default:
-            console.log('Unknown message type received:', data.type);
+            console.log('Unhandled packet type:', data.type);
     }
 }
 
-// Send current text message or file
 function handleSendMessage() {
     initAudio();
     const text = DOM.messageInput.value.trim();
 
-    // Check if we have a pending file to send
     if (state.pendingFile) {
-        sendFile(state.pendingFile);
+        streamFileToMesh(state.pendingFile);
         clearPendingFile();
     }
 
@@ -638,78 +1077,279 @@ function handleSendMessage() {
         timestamp: Date.now()
     };
 
-    // Broadcast to peers
     broadcastPayload(messageObj);
-
-    // Stop typing indicator
     broadcastTyping(false);
 
-    // Append to local chat
-    appendChatMessage({
+    const localMsg = {
         id: messageObj.id,
         isSelf: true,
         senderId: state.myId,
+        senderUserId: state.user.userId,
         senderName: state.user.name,
         avatarColor: state.user.avatarColor,
         text: text,
         timestamp: messageObj.timestamp,
+        delivered: false,
         reactions: {}
-    });
+    };
+
+    state.messages.push(localMsg);
+    Storage.saveChatHistory(state.messages);
+    renderChatMessage(localMsg);
 
     playSound('send');
     DOM.messageInput.value = '';
     DOM.messageInput.focus();
 }
 
-function sendFile(file) {
-    if (file.size > CONFIG.MAX_FILE_SIZE_MB * 1024 * 1024) {
-        showToast(`File is too large! Maximum allowed is ${CONFIG.MAX_FILE_SIZE_MB}MB.`, 'error');
+// ==========================================
+// 13. 5GB+ Chunked Streaming File Engine
+// ==========================================
+async function streamFileToMesh(file) {
+    if (file.size > CONFIG.MAX_FILE_SIZE_BYTES) {
+        showToast(`File exceeds limit! Maximum size is ${formatFileSize(CONFIG.MAX_FILE_SIZE_BYTES)}.`, 'error');
         return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        const base64Data = e.target.result;
-        const messageObj = {
-            type: 'FILE',
-            id: generateUUID(),
-            fileName: file.name,
-            fileType: file.type,
-            fileSize: file.size,
-            fileData: base64Data,
-            timestamp: Date.now()
-        };
+    if (state.peers.size === 0) {
+        showToast('Cannot transfer file: No peers connected.', 'error');
+        return;
+    }
 
-        // Broadcast file to peers
-        broadcastPayload(messageObj);
+    const fileId = generateUUID();
+    const chunkSize = CONFIG.CHUNK_SIZE;
+    const totalChunks = Math.ceil(file.size / chunkSize);
 
-        // Render in self chat
-        appendFileMessage({
-            id: messageObj.id,
-            isSelf: true,
-            senderId: state.myId,
-            senderName: state.user.name,
-            avatarColor: state.user.avatarColor,
-            fileName: file.name,
-            fileType: file.type,
-            fileSize: file.size,
-            fileData: base64Data,
-            timestamp: messageObj.timestamp,
-            reactions: {}
-        });
-
-        playSound('send');
+    const transfer = {
+        fileId: fileId,
+        file: file,
+        totalChunks: totalChunks,
+        sentChunks: 0,
+        bytesSent: 0,
+        totalBytes: file.size,
+        startTime: Date.now(),
+        cancelled: false
     };
 
-    reader.readAsDataURL(file);
+    state.transfers.set(fileId, transfer);
+
+    broadcastPayload({
+        type: 'FILE_START',
+        fileId: fileId,
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type || 'application/octet-stream',
+        totalChunks: totalChunks,
+        chunkSize: chunkSize,
+        timestamp: Date.now()
+    });
+
+    const localFileMsg = {
+        id: fileId,
+        type: 'FILE',
+        isSelf: true,
+        senderId: state.myId,
+        senderUserId: state.user.userId,
+        senderName: state.user.name,
+        avatarColor: state.user.avatarColor,
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+        timestamp: Date.now(),
+        delivered: false,
+        isStreaming: true
+    };
+
+    state.messages.push(localFileMsg);
+    Storage.saveChatHistory(state.messages);
+    renderFileProgressCard(localFileMsg, true);
+
+    playSound('send');
+
+    try {
+        for (let i = 0; i < totalChunks; i++) {
+            if (transfer.cancelled) {
+                showToast(`Upload for ${file.name} cancelled.`, 'info');
+                break;
+            }
+
+            const start = i * chunkSize;
+            const end = Math.min(start + chunkSize, file.size);
+            const slice = file.slice(start, end);
+            const arrayBuffer = await slice.arrayBuffer();
+            const base64Chunk = arrayBufferToBase64(arrayBuffer);
+
+            broadcastPayload({
+                type: 'FILE_CHUNK',
+                fileId: fileId,
+                chunkIndex: i,
+                totalChunks: totalChunks,
+                data: base64Chunk
+            });
+
+            transfer.sentChunks++;
+            transfer.bytesSent += (end - start);
+
+            updateTransferProgressUI(fileId, transfer.bytesSent, transfer.totalBytes, transfer.startTime, true);
+            await checkBackpressure();
+        }
+
+        if (!transfer.cancelled) {
+            broadcastPayload({
+                type: 'FILE_END',
+                fileId: fileId
+            });
+
+            completeFileTransferUI(fileId, file.name, file.size, file.type, URL.createObjectURL(file), true);
+            state.transfers.delete(fileId);
+            playSound('complete');
+            showToast(`Finished uploading ${file.name}!`, 'success');
+        }
+    } catch (err) {
+        console.error('Error during chunked file upload:', err);
+        showToast('File transfer error occurred.', 'error');
+    }
+}
+
+async function checkBackpressure() {
+    let maxBuffered = 0;
+    state.peers.forEach(peer => {
+        if (peer.connection && peer.connection.dataChannel) {
+            maxBuffered = Math.max(maxBuffered, peer.connection.dataChannel.bufferedAmount || 0);
+        }
+    });
+
+    if (maxBuffered > 1.5 * 1024 * 1024) {
+        await new Promise(resolve => setTimeout(resolve, 35));
+    }
+}
+
+function handleIncomingFileStart(senderId, senderName, avatarColor, header) {
+    const fileId = header.fileId;
+    const transfer = {
+        fileId: fileId,
+        fileName: header.fileName,
+        fileSize: header.fileSize,
+        fileType: header.fileType,
+        totalChunks: header.totalChunks,
+        receivedChunks: 0,
+        bytesReceived: 0,
+        totalBytes: header.fileSize,
+        startTime: Date.now(),
+        chunks: new Array(header.totalChunks),
+        cancelled: false
+    };
+
+    state.transfers.set(fileId, transfer);
+
+    const incomingFileMsg = {
+        id: fileId,
+        type: 'FILE',
+        isSelf: false,
+        senderId: senderId,
+        senderName: senderName,
+        avatarColor: avatarColor,
+        fileName: header.fileName,
+        fileType: header.fileType,
+        fileSize: header.fileSize,
+        timestamp: header.timestamp || Date.now(),
+        isStreaming: true
+    };
+
+    state.messages.push(incomingFileMsg);
+    Storage.saveChatHistory(state.messages);
+    renderFileProgressCard(incomingFileMsg, false);
+    playSound('message');
+}
+
+function handleIncomingFileChunk(packet) {
+    const transfer = state.transfers.get(packet.fileId);
+    if (!transfer || transfer.cancelled) return;
+
+    try {
+        const buffer = base64ToArrayBuffer(packet.data);
+        transfer.chunks[packet.chunkIndex] = buffer;
+        transfer.receivedChunks++;
+        transfer.bytesReceived += buffer.byteLength;
+
+        updateTransferProgressUI(packet.fileId, transfer.bytesReceived, transfer.totalBytes, transfer.startTime, false);
+    } catch (e) {
+        console.error('Failed to unpack chunk:', e);
+    }
+}
+
+function handleIncomingFileEnd(fileId) {
+    const transfer = state.transfers.get(fileId);
+    if (!transfer || transfer.cancelled) return;
+
+    try {
+        const blob = new Blob(transfer.chunks, { type: transfer.fileType });
+        const downloadUrl = URL.createObjectURL(blob);
+
+        completeFileTransferUI(fileId, transfer.fileName, transfer.fileSize, transfer.fileType, downloadUrl, false);
+        transfer.chunks = null;
+        state.transfers.delete(fileId);
+
+        playSound('complete');
+        showToast(`Downloaded ${transfer.fileName} (${formatFileSize(transfer.fileSize)})!`, 'success');
+    } catch (e) {
+        console.error('Failed to assemble file blob:', e);
+        showToast('Error assembling incoming file.', 'error');
+    }
+}
+
+function handleIncomingFileCancel(fileId) {
+    const transfer = state.transfers.get(fileId);
+    if (transfer) {
+        transfer.cancelled = true;
+        transfer.chunks = null;
+        state.transfers.delete(fileId);
+    }
+    const card = document.getElementById(`transfer-card-${fileId}`);
+    if (card) {
+        card.innerHTML = `<span class="text-xs text-error font-medium">Transfer cancelled by peer</span>`;
+    }
+}
+
+function cancelTransfer(fileId) {
+    const transfer = state.transfers.get(fileId);
+    if (transfer) {
+        transfer.cancelled = true;
+        transfer.chunks = null;
+        state.transfers.delete(fileId);
+    }
+
+    broadcastPayload({
+        type: 'FILE_CANCEL',
+        fileId: fileId
+    });
+
+    const card = document.getElementById(`transfer-card-${fileId}`);
+    if (card) {
+        card.innerHTML = `<span class="text-xs text-error font-medium">Transfer cancelled</span>`;
+    }
+
+    showToast('Transfer cancelled', 'info');
 }
 
 // ==========================================
-// 9. UI Rendering & Chat View
+// 14. UI Rendering (Chat, Media & Progress)
 // ==========================================
-function appendChatMessage(msg) {
+function checkAndRenderDateDivider(timestamp) {
+    if (!timestamp) return;
+    const msgDateStr = new Date(timestamp).toDateString();
+    if (state.lastRenderedDate !== msgDateStr) {
+        state.lastRenderedDate = msgDateStr;
+        const divider = document.createElement('div');
+        divider.className = 'date-divider';
+        divider.innerHTML = `<span class="date-divider-pill">${formatDateDivider(timestamp)}</span>`;
+        DOM.chatDiv.appendChild(divider);
+    }
+}
+
+function renderChatMessage(msg, shouldScroll = true) {
     hideEmptyChatState();
-    state.messages.push(msg);
+    checkAndRenderDateDivider(msg.timestamp);
 
     const isSelf = msg.isSelf;
     const timeStr = formatTime(msg.timestamp);
@@ -719,6 +1359,211 @@ function appendChatMessage(msg) {
 
     const msgElement = document.createElement('div');
     msgElement.className = `chat ${chatAlignment} animate-message group`;
+    msgElement.dataset.messageId = msg.id;
+
+    const deliveryCheckHtml = isSelf ? `
+        <span id="delivery-${msg.id}" class="delivery-check ${msg.delivered ? 'delivered' : 'sent'}" title="${msg.delivered ? 'Delivered to mesh' : 'Sent'}">
+            ${msg.delivered ? '✓✓' : '✓'}
+        </span>
+    ` : '';
+
+    msgElement.innerHTML = `
+        <div class="chat-image avatar placeholder">
+            <div class="w-8 h-8 rounded-full text-white font-bold text-xs shadow-sm flex items-center justify-center" style="background-color: ${msg.avatarColor}">
+                <span>${escapeHtml(initial)}</span>
+            </div>
+        </div>
+        <div class="chat-header text-[11px] opacity-70 mb-1 flex items-center gap-1.5">
+            <span class="font-semibold">${escapeHtml(msg.senderName)}</span>
+            <time class="text-[10px] opacity-60">${timeStr}</time>
+            ${deliveryCheckHtml}
+        </div>
+        <div class="chat-bubble ${bubbleClass} text-sm break-words max-w-[85%] sm:max-w-md shadow-sm relative">
+            <div class="chat-text-content select-text">${escapeHtml(msg.text)}</div>
+            <div class="reactions-wrapper flex flex-wrap gap-1 mt-1 empty:hidden"></div>
+        </div>
+        <div class="chat-footer opacity-0 group-hover:opacity-100 transition-opacity mt-1 flex items-center gap-1">
+            <button class="btn btn-ghost btn-circle btn-xs hover:bg-base-200" onclick="toggleReactionPicker('${msg.id}')" title="React with emoji">
+                <span class="text-xs">😀</span>
+            </button>
+        </div>
+    `;
+
+    DOM.chatDiv.appendChild(msgElement);
+    if (shouldScroll) smartScrollToBottom();
+}
+
+function renderFileProgressCard(msg, isSender) {
+    hideEmptyChatState();
+    checkAndRenderDateDivider(msg.timestamp);
+
+    const isSelf = msg.isSelf;
+    const timeStr = formatTime(msg.timestamp);
+    const bubbleClass = isSelf ? 'chat-bubble-primary' : 'chat-bubble-secondary';
+    const chatAlignment = isSelf ? 'chat-end' : 'chat-start';
+    const initial = getInitials(msg.senderName);
+    const modeLabel = isSender ? 'Uploading' : 'Downloading';
+
+    const msgElement = document.createElement('div');
+    msgElement.className = `chat ${chatAlignment} animate-message`;
+    msgElement.dataset.messageId = msg.id;
+
+    msgElement.innerHTML = `
+        <div class="chat-image avatar placeholder">
+            <div class="w-8 h-8 rounded-full text-white font-bold text-xs shadow-sm flex items-center justify-center" style="background-color: ${msg.avatarColor}">
+                <span>${escapeHtml(initial)}</span>
+            </div>
+        </div>
+        <div class="chat-header text-[11px] opacity-70 mb-1 flex items-center gap-1.5">
+            <span class="font-semibold">${escapeHtml(msg.senderName)}</span>
+            <time class="text-[10px] opacity-60">${timeStr}</time>
+        </div>
+        <div class="chat-bubble ${bubbleClass} text-sm break-words max-w-[88%] sm:max-w-md shadow-sm relative">
+            <div id="transfer-card-${msg.id}" class="flex flex-col gap-2 p-1.5 min-w-[240px]">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-2 truncate">
+                        <span class="badge badge-warning badge-xs font-mono font-semibold">${modeLabel}</span>
+                        <span class="font-semibold text-xs truncate max-w-[140px]">${escapeHtml(msg.fileName)}</span>
+                    </div>
+                    <button class="btn btn-ghost btn-circle btn-xs text-error" onclick="cancelTransfer('${msg.id}')" title="Cancel Transfer">✕</button>
+                </div>
+                <div class="w-full bg-base-300 rounded-full h-2.5 overflow-hidden">
+                    <div id="progress-bar-${msg.id}" class="bg-primary h-2.5 rounded-full transfer-progress-striped transition-all duration-150" style="width: 0%"></div>
+                </div>
+                <div class="flex items-center justify-between text-[10px] opacity-80 font-mono">
+                    <span id="progress-percent-${msg.id}" class="font-bold">0%</span>
+                    <span id="progress-bytes-${msg.id}">0 B / ${formatFileSize(msg.fileSize)}</span>
+                    <span id="progress-speed-${msg.id}">...</span>
+                </div>
+                <div class="flex items-center justify-between text-[10px] opacity-70 font-mono pt-0.5 border-t border-base-content/10">
+                    <span>ETA: <strong id="progress-eta-${msg.id}">Calculating...</strong></span>
+                </div>
+            </div>
+            <div class="reactions-wrapper flex flex-wrap gap-1 mt-1 empty:hidden"></div>
+        </div>
+    `;
+
+    DOM.chatDiv.appendChild(msgElement);
+    smartScrollToBottom();
+}
+
+function updateTransferProgressUI(fileId, bytesTransferred, totalBytes, startTime, isSender) {
+    const bar = document.getElementById(`progress-bar-${fileId}`);
+    const percentEl = document.getElementById(`progress-percent-${fileId}`);
+    const bytesEl = document.getElementById(`progress-bytes-${fileId}`);
+    const speedEl = document.getElementById(`progress-speed-${fileId}`);
+    const etaEl = document.getElementById(`progress-eta-${fileId}`);
+    if (!bar || !percentEl || !bytesEl || !speedEl || !etaEl) return;
+
+    const percent = Math.min(100, Math.round((bytesTransferred / totalBytes) * 100));
+    bar.style.width = `${percent}%`;
+    percentEl.innerText = `${percent}%`;
+    bytesEl.innerText = `${formatFileSize(bytesTransferred)} / ${formatFileSize(totalBytes)}`;
+
+    const elapsedSeconds = (Date.now() - startTime) / 1000;
+    if (elapsedSeconds > 0.5) {
+        const rateBytesPerSec = bytesTransferred / elapsedSeconds;
+        speedEl.innerText = `${formatFileSize(rateBytesPerSec)}/s`;
+
+        const remainingBytes = totalBytes - bytesTransferred;
+        const etaSeconds = rateBytesPerSec > 0 ? remainingBytes / rateBytesPerSec : 0;
+        etaEl.innerText = formatETA(etaSeconds);
+    }
+}
+
+function completeFileTransferUI(fileId, fileName, fileSize, fileType, downloadUrl, isSender) {
+    const card = document.getElementById(`transfer-card-${fileId}`);
+    if (!card) return;
+
+    const isImage = fileType && fileType.startsWith('image/');
+    const isVideo = fileType && fileType.startsWith('video/');
+    const isAudio = fileType && fileType.startsWith('audio/');
+
+    if (isVideo && downloadUrl) {
+        card.innerHTML = `
+            <div class="flex flex-col gap-2">
+                <div class="relative group">
+                    <video src="${downloadUrl}" controls preload="metadata" playsinline class="rounded-lg max-h-64 w-full bg-black/50 shadow"></video>
+                </div>
+                <div class="flex items-center justify-between pt-1 border-t border-base-content/10 text-xs">
+                    <span class="truncate max-w-[150px] opacity-80 font-medium">${escapeHtml(fileName)}</span>
+                    <div class="flex items-center gap-1">
+                        <button type="button" class="btn btn-ghost btn-xs gap-1" onclick="openMediaLightbox('${downloadUrl}', 'video', '${escapeHtml(fileName)}')">
+                            Enlarge
+                        </button>
+                        <a href="${downloadUrl}" download="${escapeHtml(fileName)}" class="btn btn-primary btn-xs gap-1 shadow-sm">
+                            Save
+                        </a>
+                    </div>
+                </div>
+            </div>
+        `;
+    } else if (isImage && downloadUrl) {
+        card.innerHTML = `
+            <div class="flex flex-col gap-2">
+                <img src="${downloadUrl}" alt="${escapeHtml(fileName)}" class="rounded-lg max-h-60 max-w-full object-cover cursor-pointer hover:opacity-95 transition-opacity shadow" onclick="openMediaLightbox('${downloadUrl}', 'image', '${escapeHtml(fileName)}')" />
+                <div class="flex items-center justify-between pt-1 border-t border-base-content/10 text-xs">
+                    <span class="truncate max-w-[150px] opacity-80 font-medium">${escapeHtml(fileName)}</span>
+                    <a href="${downloadUrl}" download="${escapeHtml(fileName)}" class="btn btn-primary btn-xs gap-1 shadow-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Save (${formatFileSize(fileSize)})
+                    </a>
+                </div>
+            </div>
+        `;
+    } else if (isAudio && downloadUrl) {
+        card.innerHTML = `
+            <div class="flex flex-col gap-1.5 p-1">
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-accent badge-xs">Audio</span>
+                    <span class="font-medium text-xs truncate max-w-[170px]">${escapeHtml(fileName)}</span>
+                </div>
+                <audio src="${downloadUrl}" controls class="w-full mt-1"></audio>
+                <div class="flex justify-end mt-1">
+                    <a href="${downloadUrl}" download="${escapeHtml(fileName)}" class="btn btn-ghost btn-xs gap-1">
+                        Download (${formatFileSize(fileSize)})
+                    </a>
+                </div>
+            </div>
+        `;
+    } else {
+        card.innerHTML = `
+            <div class="flex items-center gap-3 p-1">
+                <div class="w-10 h-10 rounded-lg bg-base-300/40 flex items-center justify-center shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                </div>
+                <div class="flex flex-col min-w-0">
+                    <span class="font-medium text-xs truncate max-w-[170px]">${escapeHtml(fileName)}</span>
+                    <span class="text-[10px] opacity-70">${formatFileSize(fileSize)} • Completed</span>
+                </div>
+                ${downloadUrl ? `
+                    <a href="${downloadUrl}" download="${escapeHtml(fileName)}" class="btn btn-circle btn-xs btn-primary ml-auto shadow" title="Download File">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                    </a>
+                ` : ''}
+            </div>
+        `;
+    }
+}
+
+function renderFileMessage(msg, shouldScroll = true) {
+    hideEmptyChatState();
+    checkAndRenderDateDivider(msg.timestamp);
+
+    const isSelf = msg.isSelf;
+    const timeStr = formatTime(msg.timestamp);
+    const bubbleClass = isSelf ? 'chat-bubble-primary' : 'chat-bubble-secondary';
+    const chatAlignment = isSelf ? 'chat-end' : 'chat-start';
+    const initial = getInitials(msg.senderName);
+
+    const msgElement = document.createElement('div');
+    msgElement.className = `chat ${chatAlignment} animate-message`;
     msgElement.dataset.messageId = msg.id;
 
     msgElement.innerHTML = `
@@ -732,55 +1577,6 @@ function appendChatMessage(msg) {
             <time class="text-[10px] opacity-60">${timeStr}</time>
         </div>
         <div class="chat-bubble ${bubbleClass} text-sm break-words max-w-[85%] sm:max-w-md shadow-sm relative">
-            <div class="chat-text-content select-text">${escapeHtml(msg.text)}</div>
-            <!-- Reaction Badges -->
-            <div class="reactions-wrapper flex flex-wrap gap-1 mt-1 empty:hidden"></div>
-        </div>
-        <div class="chat-footer opacity-0 group-hover:opacity-100 transition-opacity mt-1 flex items-center gap-1">
-            <button class="btn btn-ghost btn-circle btn-xs hover:bg-base-200" onclick="toggleReactionPicker('${msg.id}')" title="React with emoji">
-                <span class="text-xs">😀</span>
-            </button>
-        </div>
-    `;
-
-    DOM.chatDiv.appendChild(msgElement);
-    smartScrollToBottom();
-}
-
-function appendFileMessage(msg) {
-    hideEmptyChatState();
-    state.messages.push(msg);
-
-    const isSelf = msg.isSelf;
-    const timeStr = formatTime(msg.timestamp);
-    const bubbleClass = isSelf ? 'chat-bubble-primary' : 'chat-bubble-secondary';
-    const chatAlignment = isSelf ? 'chat-end' : 'chat-start';
-    const initial = getInitials(msg.senderName);
-    const isImage = msg.fileType && msg.fileType.startsWith('image/');
-
-    const msgElement = document.createElement('div');
-    msgElement.className = `chat ${chatAlignment} animate-message group`;
-    msgElement.dataset.messageId = msg.id;
-
-    let contentHtml = '';
-
-    if (isImage) {
-        contentHtml = `
-            <div class="p-1">
-                <img src="${msg.fileData}" alt="${escapeHtml(msg.fileName)}" class="rounded-lg max-h-60 max-w-full object-cover cursor-pointer hover:opacity-95 transition-opacity shadow" onclick="openImageLightbox('${msg.fileData}')" />
-                <div class="flex items-center justify-between mt-2 pt-1 border-t border-base-content/10 text-xs">
-                    <span class="truncate max-w-[160px] opacity-80">${escapeHtml(msg.fileName)}</span>
-                    <a href="${msg.fileData}" download="${escapeHtml(msg.fileName)}" class="btn btn-ghost btn-xs gap-1">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
-                        Save
-                    </a>
-                </div>
-            </div>
-        `;
-    } else {
-        contentHtml = `
             <div class="flex items-center gap-3 p-1">
                 <div class="w-10 h-10 rounded-lg bg-base-300/40 flex items-center justify-center shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -791,38 +1587,13 @@ function appendFileMessage(msg) {
                     <span class="font-medium text-xs truncate max-w-[180px]">${escapeHtml(msg.fileName)}</span>
                     <span class="text-[10px] opacity-70">${formatFileSize(msg.fileSize)}</span>
                 </div>
-                <a href="${msg.fileData}" download="${escapeHtml(msg.fileName)}" class="btn btn-circle btn-xs btn-ghost border border-base-content/20 ml-1" title="Download File">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                </a>
             </div>
-        `;
-    }
-
-    msgElement.innerHTML = `
-        <div class="chat-image avatar placeholder">
-            <div class="w-8 h-8 rounded-full text-white font-bold text-xs shadow-sm flex items-center justify-center" style="background-color: ${msg.avatarColor}">
-                <span>${escapeHtml(initial)}</span>
-            </div>
-        </div>
-        <div class="chat-header text-[11px] opacity-70 mb-1 flex items-center gap-1.5">
-            <span class="font-semibold">${escapeHtml(msg.senderName)}</span>
-            <time class="text-[10px] opacity-60">${timeStr}</time>
-        </div>
-        <div class="chat-bubble ${bubbleClass} text-sm break-words max-w-[85%] sm:max-w-md shadow-sm relative">
-            ${contentHtml}
             <div class="reactions-wrapper flex flex-wrap gap-1 mt-1 empty:hidden"></div>
-        </div>
-        <div class="chat-footer opacity-0 group-hover:opacity-100 transition-opacity mt-1 flex items-center gap-1">
-            <button class="btn btn-ghost btn-circle btn-xs hover:bg-base-200" onclick="toggleReactionPicker('${msg.id}')" title="React with emoji">
-                <span class="text-xs">😀</span>
-            </button>
         </div>
     `;
 
     DOM.chatDiv.appendChild(msgElement);
-    smartScrollToBottom();
+    if (shouldScroll) smartScrollToBottom();
 }
 
 function addSystemMessage(text) {
@@ -844,10 +1615,27 @@ function hideEmptyChatState() {
     }
 }
 
+function restoreChatFromStorage() {
+    if (!state.messages || state.messages.length === 0) return;
+
+    hideEmptyChatState();
+    DOM.chatDiv.innerHTML = '';
+    state.lastRenderedDate = null;
+
+    state.messages.forEach(msg => {
+        if (msg.type === 'FILE' || msg.fileName) {
+            renderFileMessage(msg, false);
+        } else {
+            renderChatMessage(msg, false);
+        }
+    });
+
+    smartScrollToBottom();
+}
+
 // Reactions handling
 window.toggleReactionPicker = function(messageId) {
     const emojis = ['👍', '❤️', '😂', '🎉', '🔥', '🚀'];
-    // Show a small inline popup or toggle standard emoji
     const picker = document.createElement('div');
     picker.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-[1px]';
     picker.onclick = (e) => {
@@ -876,7 +1664,6 @@ function sendReaction(messageId, emoji) {
     const msg = state.messages.find(m => m.id === messageId);
     if (!msg) return;
 
-    // Broadcast reaction
     broadcastPayload({
         type: 'REACTION',
         messageId: messageId,
@@ -911,19 +1698,39 @@ function applyReactionToUI(messageId, emoji, senderName) {
     }
 }
 
-// Lightbox for full size image viewing
-window.openImageLightbox = function(src) {
-    DOM.modalImagePreview.src = src;
-    DOM.imageModal.showModal();
+// Universal Media Lightbox (Images & Videos)
+window.openMediaLightbox = function(url, type, name = 'Media Attachment') {
+    DOM.mediaModalTitle.innerText = name;
+    DOM.mediaModalDownload.href = url;
+    DOM.mediaModalDownload.download = name;
+
+    if (type === 'video') {
+        DOM.mediaModalBadge.innerText = 'Video';
+        DOM.modalImagePreview.classList.add('hidden');
+        DOM.modalVideoPreview.classList.remove('hidden');
+        DOM.modalVideoPreview.src = url;
+        DOM.modalVideoPreview.play().catch(() => {});
+    } else {
+        DOM.mediaModalBadge.innerText = 'Image';
+        DOM.modalVideoPreview.classList.add('hidden');
+        DOM.modalVideoPreview.pause();
+        DOM.modalVideoPreview.src = '';
+        DOM.modalImagePreview.classList.remove('hidden');
+        DOM.modalImagePreview.src = url;
+    }
+
+    DOM.mediaModal.showModal();
 };
 
-// Render the connected peers list in the sidebar
+// ==========================================
+// 15. Peers & Contacts List Rendering
+// ==========================================
 function renderPeersList() {
     DOM.connectedPeers.innerHTML = '';
     const count = state.peers.size;
 
     DOM.peerCountText.innerText = `${count} connected`;
-    DOM.activePeersPill.innerText = count;
+    DOM.activeTabBadge.innerText = count;
 
     if (count === 0) {
         DOM.connectedPeers.appendChild(DOM.noPeersPlaceholder);
@@ -933,17 +1740,21 @@ function renderPeersList() {
     state.peers.forEach((peer, peerId) => {
         const item = document.createElement('div');
         item.className = 'card bg-base-100 p-2.5 shadow-sm border border-base-300 flex flex-row items-center justify-between gap-2';
-
         const initial = getInitials(peer.name);
 
         item.innerHTML = `
             <div class="flex items-center gap-2 min-w-0">
-                <div class="w-7 h-7 rounded-full text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-sm" style="background-color: ${peer.avatarColor}">
-                    <span>${escapeHtml(initial)}</span>
+                <div class="relative">
+                    <div class="w-8 h-8 rounded-full text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-sm" style="background-color: ${peer.avatarColor}">
+                        <span>${escapeHtml(initial)}</span>
+                    </div>
+                    <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-success border-2 border-base-100 status-dot-online"></span>
                 </div>
                 <div class="flex flex-col min-w-0">
-                    <span class="text-xs font-semibold truncate leading-tight">${escapeHtml(peer.name)}</span>
-                    <span class="font-mono text-[10px] opacity-50 truncate leading-tight">${peerId.slice(0, 8)}...</span>
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-xs font-semibold truncate leading-tight">${escapeHtml(peer.name)}</span>
+                    </div>
+                    <span class="text-[10px] opacity-60 truncate">${escapeHtml(peer.bio || 'Online')}</span>
                 </div>
             </div>
             <div class="flex items-center gap-1">
@@ -964,6 +1775,72 @@ function renderPeersList() {
     });
 }
 
+function renderContactsList() {
+    DOM.savedContactsList.innerHTML = '';
+    const count = state.contacts.length;
+    DOM.contactsTabBadge.innerText = count;
+
+    if (count === 0) {
+        DOM.savedContactsList.appendChild(DOM.noContactsPlaceholder);
+        return;
+    }
+
+    const sorted = [...state.contacts].sort((a, b) => {
+        if (a.isOnline === b.isOnline) {
+            return (b.lastSeen || 0) - (a.lastSeen || 0);
+        }
+        return a.isOnline ? -1 : 1;
+    });
+
+    sorted.forEach((contact) => {
+        const item = document.createElement('div');
+        item.className = 'card bg-base-100 p-2.5 shadow-sm border border-base-300 flex flex-row items-center justify-between gap-2';
+
+        const initial = getInitials(contact.name);
+        const isOnline = Boolean(contact.isOnline && state.peers.has(contact.id));
+        const lastSeenHtml = formatLastSeen(contact.lastSeen, isOnline);
+
+        item.innerHTML = `
+            <div class="flex items-center gap-2 min-w-0">
+                <div class="relative">
+                    <div class="w-8 h-8 rounded-full text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-sm" style="background-color: ${contact.avatarColor}">
+                        <span>${escapeHtml(initial)}</span>
+                    </div>
+                    <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-success border-2 border-base-100 status-dot-online' : 'bg-base-content/30 border-2 border-base-100'}"></span>
+                </div>
+                <div class="flex flex-col min-w-0">
+                    <span class="text-xs font-semibold truncate leading-tight">${escapeHtml(contact.name)}</span>
+                    <span class="text-[10px] leading-tight">${lastSeenHtml}</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-1">
+                ${!isOnline ? `
+                    <button class="btn btn-outline btn-primary btn-xs" onclick="quickConnect('${contact.id}')" title="Connect to this contact">
+                        Connect
+                    </button>
+                ` : ''}
+                <button class="btn btn-ghost btn-circle btn-xs text-base-content/60 hover:text-primary" onclick="copyPeerId('${contact.id}')" title="Copy ID">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                </button>
+                <button class="btn btn-ghost btn-circle btn-xs text-error/60 hover:text-error" onclick="removeContact('${contact.id}')" title="Remove Contact">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                </button>
+            </div>
+        `;
+
+        DOM.savedContactsList.appendChild(item);
+    });
+}
+
+window.quickConnect = function(id) {
+    DOM.peerIdInput.value = id;
+    connectToRemotePeer(id);
+};
+
 window.copyPeerId = function(id) {
     navigator.clipboard.writeText(id).then(() => {
         showToast('Peer ID copied to clipboard', 'info');
@@ -978,7 +1855,21 @@ window.disconnectPeer = function(id) {
     }
 };
 
-// Typing indicator update
+function switchSidebarTab(tab) {
+    state.activeTab = tab;
+    if (tab === 'active') {
+        DOM.tabBtnActive.classList.add('tab-active');
+        DOM.tabBtnContacts.classList.remove('tab-active');
+        DOM.activePeersContainer.classList.remove('hidden');
+        DOM.savedContactsContainer.classList.add('hidden');
+    } else {
+        DOM.tabBtnContacts.classList.add('tab-active');
+        DOM.tabBtnActive.classList.remove('tab-active');
+        DOM.savedContactsContainer.classList.remove('hidden');
+        DOM.activePeersContainer.classList.add('hidden');
+    }
+}
+
 function updateTypingIndicator() {
     const typingNames = [];
     state.peers.forEach((peer) => {
@@ -1032,9 +1923,8 @@ function broadcastTyping(isTyping) {
     });
 }
 
-// Auto scroll management
 function smartScrollToBottom() {
-    const threshold = 120;
+    const threshold = 140;
     const isNearBottom = DOM.chatDiv.scrollHeight - DOM.chatDiv.scrollTop - DOM.chatDiv.clientHeight <= threshold;
 
     if (isNearBottom) {
@@ -1049,27 +1939,23 @@ function smartScrollToBottom() {
 }
 
 // ==========================================
-// 10. File Drop & Attachment Handling
+// 16. File Drop & Attachment Handling
 // ==========================================
 function setupFileHandling() {
-    // Attach button triggers file input
     DOM.attachFileBtn.addEventListener('click', () => {
         DOM.fileInput.click();
     });
 
-    // File selected via input
     DOM.fileInput.addEventListener('change', (e) => {
         if (e.target.files && e.target.files[0]) {
             setPendingFile(e.target.files[0]);
         }
     });
 
-    // Cancel selected file
     DOM.fileCancelBtn.addEventListener('click', () => {
         clearPendingFile();
     });
 
-    // Drag and drop events on document/main chat
     const dropzone = DOM.fileDropzone;
 
     ['dragenter', 'dragover'].forEach(eventName => {
@@ -1098,6 +1984,10 @@ function setupFileHandling() {
 }
 
 function setPendingFile(file) {
+    if (file.size > CONFIG.MAX_FILE_SIZE_BYTES) {
+        showToast(`Selected file exceeds maximum limit of 5GB.`, 'error');
+        return;
+    }
     state.pendingFile = file;
     DOM.filePreviewName.innerText = file.name;
     DOM.filePreviewSize.innerText = `(${formatFileSize(file.size)})`;
@@ -1114,7 +2004,7 @@ function clearPendingFile() {
 }
 
 // ==========================================
-// 11. Sharing, Links & QR Code
+// 17. Sharing, Links & QR Code
 // ==========================================
 function getInviteLink() {
     const url = new URL(window.location.href);
@@ -1162,7 +2052,7 @@ function showQRCodeModal() {
 }
 
 // ==========================================
-// 12. User Profile Management
+// 18. User Profile Management
 // ==========================================
 function updateUserProfileUI() {
     DOM.userNameDisplay.innerText = state.user.name;
@@ -1173,17 +2063,20 @@ function updateUserProfileUI() {
 function handleSaveProfile(e) {
     e.preventDefault();
     const newName = DOM.profileNameInp.value.trim();
+    const newBio = DOM.profileBioInp.value.trim();
     if (!newName) return;
 
     state.user.name = newName;
-    localStorage.setItem(CONFIG.STORAGE_KEYS.USERNAME, newName);
+    state.user.bio = newBio;
+    Storage.saveProfile(state.user);
     updateUserProfileUI();
 
-    // Broadcast updated profile to all connected peers
     broadcastPayload({
         type: 'PROFILE_UPDATE',
+        userId: state.user.userId,
         name: state.user.name,
-        avatarColor: state.user.avatarColor
+        avatarColor: state.user.avatarColor,
+        bio: state.user.bio
     });
 
     DOM.profileModal.close();
@@ -1191,7 +2084,87 @@ function handleSaveProfile(e) {
 }
 
 // ==========================================
-// 13. Chat Export & Clear
+// 19. Backup Export & Import Service
+// ==========================================
+function exportFullBackup() {
+    const backupBundle = {
+        app: 'PeerWave',
+        version: 3,
+        exportTimestamp: Date.now(),
+        profile: state.user,
+        settings: state.settings,
+        contacts: state.contacts,
+        chat: state.messages
+    };
+
+    const json = JSON.stringify(backupBundle, null, 2);
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const dateStr = new Date().toISOString().slice(0, 10);
+    a.download = `peerwave_backup_${dateStr}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast('Full backup downloaded!', 'success');
+}
+
+function importFullBackup() {
+    const file = DOM.importBackupFile.files && DOM.importBackupFile.files[0];
+    if (!file) {
+        showToast('Please select a valid .json backup file.', 'warning');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const data = JSON.parse(e.target.result);
+            if (!data || typeof data !== 'object') {
+                throw new Error('Invalid JSON format');
+            }
+
+            if (data.profile) {
+                state.user = { ...state.user, ...data.profile };
+                Storage.saveProfile(state.user);
+                updateUserProfileUI();
+            }
+
+            if (data.settings) {
+                state.settings = { ...state.settings, ...data.settings };
+                Storage.saveSettings(state.settings);
+                initTheme();
+                updateSoundUI();
+            }
+
+            if (Array.isArray(data.contacts)) {
+                state.contacts = data.contacts;
+                Storage.saveContacts(state.contacts);
+                renderContactsList();
+            }
+
+            if (Array.isArray(data.chat)) {
+                state.messages = data.chat;
+                Storage.saveChatHistory(state.messages);
+                restoreChatFromStorage();
+            }
+
+            DOM.backupModal.close();
+            DOM.importBackupFile.value = '';
+            showToast('Backup restored successfully!', 'success');
+        } catch (err) {
+            console.error('Failed to restore backup:', err);
+            showToast('Failed to import backup. Corrupted or invalid JSON.', 'error');
+        }
+    };
+    reader.readAsText(file);
+}
+
+// ==========================================
+// 20. Chat Export & Clear
 // ==========================================
 function exportChatHistory() {
     if (state.messages.length === 0) {
@@ -1207,7 +2180,7 @@ function exportChatHistory() {
         if (msg.text) {
             output += `[${time}] ${msg.senderName}: ${msg.text}\n`;
         } else if (msg.fileName) {
-            output += `[${time}] ${msg.senderName} sent file: ${msg.fileName} (${formatFileSize(msg.fileSize)})\n`;
+            output += `[${time}] ${msg.senderName} shared file: ${msg.fileName} (${formatFileSize(msg.fileSize)})\n`;
         }
     });
 
@@ -1225,37 +2198,39 @@ function exportChatHistory() {
 }
 
 function clearChat() {
-    if (confirm('Are you sure you want to clear the chat messages?')) {
+    if (confirm('Are you sure you want to clear your local chat messages?')) {
         state.messages = [];
+        state.lastRenderedDate = null;
+        Storage.saveChatHistory([]);
         DOM.chatDiv.innerHTML = '';
         if (DOM.emptyChatState) {
             DOM.emptyChatState.classList.remove('hidden');
             DOM.chatDiv.appendChild(DOM.emptyChatState);
         }
-        showToast('Chat cleared', 'info');
+        showToast('Chat history cleared', 'info');
     }
 }
 
 // ==========================================
-// 14. Theme & Sound Preferences
+// 21. Theme & Sound Preferences
 // ==========================================
 function initTheme() {
-    const savedTheme = localStorage.getItem(CONFIG.STORAGE_KEYS.THEME) || CONFIG.DEFAULT_THEME;
-    document.documentElement.setAttribute('data-theme', savedTheme);
+    const theme = state.settings.theme || CONFIG.DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme', theme);
 
     document.querySelectorAll('.theme-select-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            const theme = btn.dataset.theme;
-            document.documentElement.setAttribute('data-theme', theme);
-            localStorage.setItem(CONFIG.STORAGE_KEYS.THEME, theme);
-            // Close dropdown if open
+            const chosenTheme = btn.dataset.theme;
+            document.documentElement.setAttribute('data-theme', chosenTheme);
+            state.settings.theme = chosenTheme;
+            Storage.saveSettings(state.settings);
             if (document.activeElement) document.activeElement.blur();
         });
     });
 }
 
 function updateSoundUI() {
-    if (state.soundEnabled) {
+    if (state.settings.soundEnabled) {
         DOM.soundOnIcon.classList.remove('hidden');
         DOM.soundOffIcon.classList.add('hidden');
     } else {
@@ -1265,25 +2240,36 @@ function updateSoundUI() {
 }
 
 function toggleSound() {
-    state.soundEnabled = !state.soundEnabled;
-    localStorage.setItem(CONFIG.STORAGE_KEYS.SOUND, state.soundEnabled);
+    state.settings.soundEnabled = !state.settings.soundEnabled;
+    Storage.saveSettings(state.settings);
     updateSoundUI();
-    showToast(state.soundEnabled ? 'Sound enabled' : 'Sound muted', 'info');
-    if (state.soundEnabled) {
+    showToast(state.settings.soundEnabled ? 'Sound enabled' : 'Sound muted', 'info');
+    if (state.settings.soundEnabled) {
         playSound('message');
     }
 }
 
 // ==========================================
-// 15. Event Listeners & Initialization
+// 22. Quick Emoji Bar Setup
+// ==========================================
+function setupQuickEmojiBar() {
+    if (!DOM.quickEmojiBar) return;
+    DOM.quickEmojiBar.querySelectorAll('.emoji-quick-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            DOM.messageInput.value += btn.innerText;
+            DOM.messageInput.focus();
+        });
+    });
+}
+
+// ==========================================
+// 23. Event Listeners & Initialization
 // ==========================================
 function setupEventListeners() {
-    // User interaction starts Web Audio context
     ['click', 'keydown'].forEach(evt => {
         window.addEventListener(evt, () => initAudio(), { once: true });
     });
 
-    // Copy ID button
     DOM.copyBtn.addEventListener('click', () => {
         if (!state.myId) return;
         navigator.clipboard.writeText(state.myId).then(() => {
@@ -1291,20 +2277,17 @@ function setupEventListeners() {
         });
     });
 
-    // Share link button
     DOM.shareLinkBtn.addEventListener('click', () => {
         if (!state.myId) return;
-        const link = getInviteLink();
-        navigator.clipboard.writeText(link).then(() => {
+        navigator.clipboard.writeText(getInviteLink()).then(() => {
             showToast('Invite link copied to clipboard!', 'success');
         });
     });
 
-    // Empty state invite button
     if (DOM.emptyInviteBtn) {
         DOM.emptyInviteBtn.addEventListener('click', () => {
             if (!state.myId) {
-                showToast('Still connecting to network...', 'warning');
+                showToast('Connecting to network...', 'warning');
                 return;
             }
             navigator.clipboard.writeText(getInviteLink()).then(() => {
@@ -1313,10 +2296,8 @@ function setupEventListeners() {
         });
     }
 
-    // QR Code button
     DOM.showQrBtn.addEventListener('click', showQRCodeModal);
 
-    // Paste ID button
     DOM.pasteIdBtn.addEventListener('click', async () => {
         try {
             const text = await navigator.clipboard.readText();
@@ -1325,17 +2306,18 @@ function setupEventListeners() {
                 DOM.peerIdInput.focus();
             }
         } catch (e) {
-            showToast('Please paste manually using Ctrl+V / Cmd+V', 'info');
+            showToast('Paste manually with Ctrl+V / Cmd+V', 'info');
         }
     });
 
-    // Connect form submission
     DOM.connectForm.addEventListener('submit', (e) => {
         e.preventDefault();
         connectToRemotePeer(DOM.peerIdInput.value);
     });
 
-    // Send message triggers
+    DOM.tabBtnActive.addEventListener('click', () => switchSidebarTab('active'));
+    DOM.tabBtnContacts.addEventListener('click', () => switchSidebarTab('contacts'));
+
     DOM.sendMessageBtn.addEventListener('click', handleSendMessage);
     DOM.messageInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -1344,10 +2326,8 @@ function setupEventListeners() {
         }
     });
 
-    // Typing notification
     DOM.messageInput.addEventListener('input', handleTypingInput);
 
-    // Scroll to bottom button
     DOM.scrollBottomBtn.addEventListener('click', () => {
         DOM.chatDiv.scrollTo({
             top: DOM.chatDiv.scrollHeight,
@@ -1357,7 +2337,7 @@ function setupEventListeners() {
     });
 
     DOM.chatDiv.addEventListener('scroll', () => {
-        const threshold = 120;
+        const threshold = 140;
         const isNearBottom = DOM.chatDiv.scrollHeight - DOM.chatDiv.scrollTop - DOM.chatDiv.clientHeight <= threshold;
         if (isNearBottom) {
             DOM.scrollBottomBtn.classList.add('hidden');
@@ -1366,7 +2346,6 @@ function setupEventListeners() {
         }
     });
 
-    // Mobile drawer toggle
     const toggleMobileDrawer = (open) => {
         if (open) {
             DOM.sidebarPanel.classList.remove('-translate-x-full');
@@ -1381,24 +2360,80 @@ function setupEventListeners() {
     DOM.sidebarCloseBtn.addEventListener('click', () => toggleMobileDrawer(false));
     DOM.sidebarBackdrop.addEventListener('click', () => toggleMobileDrawer(false));
 
-    // Profile modal
     DOM.profileEditBtn.addEventListener('click', () => {
         DOM.profileNameInp.value = state.user.name;
+        DOM.profileBioInp.value = state.user.bio || '';
         DOM.profileModal.showModal();
     });
     DOM.profileForm.addEventListener('submit', handleSaveProfile);
     DOM.profileCancelBtn.addEventListener('click', () => DOM.profileModal.close());
 
-    // Sound toggle
-    DOM.soundToggleBtn.addEventListener('click', toggleSound);
+    DOM.backupModalBtn.addEventListener('click', () => DOM.backupModal.showModal());
+    DOM.exportBackupBtn.addEventListener('click', exportFullBackup);
+    DOM.importBackupBtn.addEventListener('click', importFullBackup);
+    DOM.modalSyncBtn.addEventListener('click', () => {
+        triggerMeshSync();
+        DOM.backupModal.close();
+    });
+    DOM.syncNowBtn.addEventListener('click', triggerMeshSync);
 
-    // Export & Clear
+    // Stop video when closing media modal
+    DOM.mediaModal.addEventListener('close', () => {
+        DOM.modalVideoPreview.pause();
+        DOM.modalVideoPreview.src = '';
+    });
+
+    DOM.soundToggleBtn.addEventListener('click', toggleSound);
     DOM.exportChatBtn.addEventListener('click', exportChatHistory);
     DOM.clearChatBtn.addEventListener('click', clearChat);
 }
 
 // ==========================================
-// 16. App Bootstrap
+// 24. PWA Registration & Install Prompt
+// ==========================================
+function setupPWA() {
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('./sw.js')
+                .then((reg) => {
+                    console.log('ServiceWorker registered with scope:', reg.scope);
+                })
+                .catch((err) => {
+                    console.warn('ServiceWorker registration failed:', err);
+                });
+        });
+    }
+
+    let deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        if (DOM.pwaInstallBtn) {
+            DOM.pwaInstallBtn.classList.remove('hidden');
+        }
+    });
+
+    if (DOM.pwaInstallBtn) {
+        DOM.pwaInstallBtn.addEventListener('click', async () => {
+            if (!deferredPrompt) return;
+            deferredPrompt.prompt();
+            const choiceResult = await deferredPrompt.userChoice;
+            if (choiceResult && choiceResult.outcome === 'accepted') {
+                showToast('Installing PeerWave...', 'success');
+            }
+            deferredPrompt = null;
+            DOM.pwaInstallBtn.classList.add('hidden');
+        });
+    }
+
+    window.addEventListener('appinstalled', () => {
+        if (DOM.pwaInstallBtn) DOM.pwaInstallBtn.classList.add('hidden');
+        showToast('PeerWave installed successfully!', 'success');
+    });
+}
+
+// ==========================================
+// 25. App Bootstrap
 // ==========================================
 function tryInitializePeer(retries = 15) {
     if (typeof Peer !== 'undefined') {
@@ -1407,7 +2442,7 @@ function tryInitializePeer(retries = 15) {
         setTimeout(() => tryInitializePeer(retries - 1), 200);
     } else {
         updateConnectionStatus('error', 'Offline / CDN Error');
-        showToast('PeerJS library failed to load. Check your internet connection.', 'error');
+        showToast('PeerJS library failed to load. Check internet connection.', 'error');
     }
 }
 
@@ -1415,7 +2450,11 @@ window.addEventListener('DOMContentLoaded', () => {
     initTheme();
     updateSoundUI();
     updateUserProfileUI();
+    renderContactsList();
+    restoreChatFromStorage();
     setupEventListeners();
+    setupQuickEmojiBar();
     setupFileHandling();
+    setupPWA();
     tryInitializePeer();
 });

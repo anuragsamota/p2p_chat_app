@@ -5,6 +5,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>PeerWave - Secure P2P Chat</title>
+    <!-- PWA Manifest & App Icons -->
+    <link rel="manifest" href="./manifest.json" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="PeerWave" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="./style.css" />
@@ -53,8 +62,16 @@
                 </div>
             </div>
 
-            <!-- Navbar End: Peer Count, Sound, Theme, Profile -->
+            <!-- Navbar End: Peer Count, Sound, Backup/Sync, Theme, Profile -->
             <div class="navbar-end gap-1 sm:gap-2">
+                <!-- PWA Install Button (shown when install prompt available) -->
+                <button id="pwa-install-btn" class="btn btn-primary btn-xs gap-1 hidden shadow-sm" title="Install App to your device">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    <span>Install</span>
+                </button>
+
                 <!-- Connected Peers Badge -->
                 <div class="badge badge-neutral gap-1 text-xs py-2.5 hidden sm:inline-flex" title="Connected Peers">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -62,6 +79,13 @@
                     </svg>
                     <span id="peer-count-text">0 connected</span>
                 </div>
+
+                <!-- Backup & Sync Modal Button -->
+                <button id="backup-modal-btn" class="btn btn-ghost btn-circle btn-sm" title="Backup & Sync Data" aria-label="Backup and sync">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                </button>
 
                 <!-- Sound Alert Toggle -->
                 <button id="sound-toggle-btn" class="btn btn-ghost btn-circle btn-sm" title="Toggle audio alert" aria-label="Toggle sound">
@@ -123,7 +147,7 @@
                 </div>
 
                 <!-- Sidebar Scrollable Content -->
-                <div class="flex-1 overflow-y-auto p-3 space-y-4">
+                <div class="flex-1 overflow-y-auto p-3 space-y-3.5">
                     <!-- Your Peer ID Card -->
                     <div class="card bg-base-100 shadow-sm border border-base-300 p-3.5">
                         <div class="flex items-center justify-between mb-1.5">
@@ -175,22 +199,44 @@
                         </form>
                     </div>
 
-                    <!-- Connected Peers List Section -->
+                    <!-- Peers & Contacts Section with Tabs -->
                     <div class="flex flex-col flex-1">
-                        <div class="flex items-center justify-between mb-2 px-1">
-                            <span class="text-xs font-semibold text-base-content/70 uppercase tracking-wider">Active Peers</span>
-                            <span id="active-peers-pill" class="badge badge-xs badge-neutral font-mono">0</span>
+                        <!-- Navigation Tabs -->
+                        <div class="tabs tabs-boxed bg-base-300/80 p-1 mb-2.5">
+                            <button id="tab-btn-active" type="button" class="tab tab-active flex-1 text-xs font-semibold gap-1">
+                                <span>Active</span>
+                                <span id="active-tab-badge" class="badge badge-neutral badge-xs font-mono">0</span>
+                            </button>
+                            <button id="tab-btn-contacts" type="button" class="tab flex-1 text-xs font-semibold gap-1">
+                                <span>Contacts</span>
+                                <span id="contacts-tab-badge" class="badge badge-neutral badge-xs font-mono">0</span>
+                            </button>
                         </div>
-                        <div id="connected-peers" class="space-y-2 min-h-[100px]">
-                            <!-- Empty state placeholder -->
-                            <div id="no-peers-placeholder" class="card bg-base-100/50 border border-dashed border-base-300 p-4 text-center">
-                                <div class="text-base-content/40 flex justify-center mb-1">
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                                    </svg>
+
+                        <!-- 1. Active Peers View Container -->
+                        <div id="active-peers-container" class="space-y-2 min-h-[100px]">
+                            <div id="connected-peers" class="space-y-2">
+                                <!-- Empty state placeholder -->
+                                <div id="no-peers-placeholder" class="card bg-base-100/50 border border-dashed border-base-300 p-4 text-center">
+                                    <div class="text-base-content/40 flex justify-center mb-1">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                        </svg>
+                                    </div>
+                                    <p class="text-xs text-base-content/60 font-medium">No peers connected</p>
+                                    <p class="text-[11px] text-base-content/40 mt-1">Share your Peer ID or link to start a mesh conversation.</p>
                                 </div>
-                                <p class="text-xs text-base-content/60 font-medium">No peers connected</p>
-                                <p class="text-[11px] text-base-content/40 mt-1">Share your Peer ID or link to start a mesh conversation.</p>
+                            </div>
+                        </div>
+
+                        <!-- 2. Saved Contacts / Recent Peers View Container -->
+                        <div id="saved-contacts-container" class="space-y-2 hidden min-h-[100px]">
+                            <div id="saved-contacts-list" class="space-y-2">
+                                <!-- Empty state placeholder -->
+                                <div id="no-contacts-placeholder" class="card bg-base-100/50 border border-dashed border-base-300 p-4 text-center">
+                                    <p class="text-xs text-base-content/60 font-medium">No saved contacts</p>
+                                    <p class="text-[11px] text-base-content/40 mt-1">Peers you connect with will be saved here with online/last seen status.</p>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -202,7 +248,13 @@
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                         </svg>
-                        <span>Export Chat</span>
+                        <span>Export</span>
+                    </button>
+                    <button id="sync-now-btn" class="btn btn-ghost btn-xs border border-base-300 gap-1" title="Sync chat messages with peers">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-info" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        <span>Sync</span>
                     </button>
                     <button id="clear-chat-btn" class="btn btn-ghost btn-xs text-error border border-error/20 gap-1 hover:bg-error hover:text-error-content" title="Clear chat messages">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -223,7 +275,7 @@
                         </svg>
                     </div>
                     <span class="text-base font-semibold">Drop file to share with peers</span>
-                    <span class="text-xs text-base-content/60">Transferred directly peer-to-peer via WebRTC</span>
+                    <span class="text-xs text-base-content/60">Transfers up to 5GB streamed directly via WebRTC</span>
                 </div>
 
                 <!-- Chat Messages Scroll Container -->
@@ -237,7 +289,7 @@
                         </div>
                         <h3 class="text-lg font-bold">Welcome to PeerWave</h3>
                         <p class="text-xs text-base-content/70 mt-1 leading-relaxed">
-                            Private, direct WebRTC peer-to-peer chat. Your messages and files are transmitted directly between browsers with zero central storage.
+                            Private, direct WebRTC peer-to-peer chat with local storage persistence and up to 5GB streaming file transfers.
                         </p>
                         <div class="mt-4 flex flex-wrap gap-2 justify-center">
                             <button id="empty-invite-btn" class="btn btn-primary btn-sm gap-1.5 shadow-sm">
@@ -267,11 +319,26 @@
                     <!-- Pending File Attachment Preview Pill -->
                     <div id="file-preview-bar" class="hidden mb-2 items-center justify-between bg-base-100 rounded-lg p-2 border border-base-300 text-xs">
                         <div class="flex items-center gap-2 truncate">
-                            <span class="badge badge-primary badge-sm">File</span>
+                            <span class="badge badge-primary badge-sm font-semibold">5GB Ready</span>
                             <span id="file-preview-name" class="font-medium truncate">document.pdf</span>
                             <span id="file-preview-size" class="text-base-content/50">(24 KB)</span>
                         </div>
                         <button id="file-cancel-btn" class="btn btn-ghost btn-circle btn-xs text-error">✕</button>
+                    </div>
+
+                    <!-- Quick Emoji Bar -->
+                    <div id="quick-emoji-bar" class="flex items-center gap-1 overflow-x-auto pb-2 scrollbar-none text-xs">
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Grinning face">😀</button>
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Laughing">😂</button>
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Heart">❤️</button>
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Thumbs up">👍</button>
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Fire">🔥</button>
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Party">🎉</button>
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Rocket">🚀</button>
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Clap">👏</button>
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="100">💯</button>
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Eyes">👀</button>
+                        <button type="button" class="btn btn-ghost btn-xs rounded-full px-2 text-sm emoji-quick-btn" title="Sparkles">✨</button>
                     </div>
 
                     <!-- Input Controls -->
@@ -279,8 +346,8 @@
                         <!-- Hidden file input -->
                         <input type="file" id="file-inp" class="hidden" />
 
-                        <!-- File attachment button -->
-                        <button id="attach-file-btn" class="btn btn-ghost btn-circle btn-sm md:btn-md" title="Attach file or photo" aria-label="Attach file">
+                        <!-- File attachment button (Supports up to 5GB) -->
+                        <button id="attach-file-btn" class="btn btn-ghost btn-circle btn-sm md:btn-md" title="Attach file (Up to 5GB streaming)" aria-label="Attach file">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-base-content/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                             </svg>
@@ -326,13 +393,22 @@
     <!-- 2. Edit Profile Modal -->
     <dialog id="profile-modal" class="modal">
         <div class="modal-box max-w-sm">
-            <h3 class="font-bold text-base mb-2">Edit Display Name</h3>
-            <p class="text-xs text-base-content/60 mb-4">Choose the name other peers will see in chat.</p>
-            <form id="profile-form" class="space-y-4">
+            <h3 class="font-bold text-base mb-2">Edit Profile</h3>
+            <p class="text-xs text-base-content/60 mb-4">Customize your display name and status bio.</p>
+            <form id="profile-form" class="space-y-3">
                 <div class="form-control">
-                    <input id="profile-name-inp" type="text" maxlength="30" class="input input-bordered w-full text-sm" placeholder="Your name" required />
+                    <label class="label py-1">
+                        <span class="label-text text-xs font-semibold">Display Name</span>
+                    </label>
+                    <input id="profile-name-inp" type="text" maxlength="30" class="input input-bordered input-sm w-full text-xs" placeholder="Your name" required />
                 </div>
-                <div class="modal-action">
+                <div class="form-control">
+                    <label class="label py-1">
+                        <span class="label-text text-xs font-semibold">Status / Bio</span>
+                    </label>
+                    <input id="profile-bio-inp" type="text" maxlength="60" class="input input-bordered input-sm w-full text-xs" placeholder="e.g. Available, Working on WebRTC..." />
+                </div>
+                <div class="modal-action mt-4">
                     <button type="button" id="profile-cancel-btn" class="btn btn-sm btn-ghost">Cancel</button>
                     <button type="submit" class="btn btn-sm btn-primary">Save Changes</button>
                 </div>
@@ -343,16 +419,66 @@
         </form>
     </dialog>
 
-    <!-- 3. Image Lightbox Modal -->
-    <dialog id="image-modal" class="modal">
-        <div class="modal-box max-w-3xl p-2 bg-base-300">
-            <div class="flex justify-end p-1">
+    <!-- 3. Backup & Storage Modal -->
+    <dialog id="backup-modal" class="modal">
+        <div class="modal-box max-w-md space-y-4">
+            <div class="flex items-center justify-between border-b border-base-300 pb-2">
+                <h3 class="font-bold text-base flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                    Profile, Chat & Backup
+                </h3>
                 <form method="dialog">
                     <button class="btn btn-circle btn-xs btn-ghost">✕</button>
                 </form>
             </div>
-            <div class="flex items-center justify-center p-2">
-                <img id="modal-image-preview" src="" alt="Shared attachment" class="max-h-[80vh] rounded-lg object-contain" />
+
+            <!-- Export Backup Card -->
+            <div class="card bg-base-200 p-3 border border-base-300">
+                <h4 class="text-xs font-bold uppercase tracking-wider mb-1 text-base-content/80">Export Full Backup</h4>
+                <p class="text-[11px] text-base-content/60 mb-3">Download a complete JSON archive of your profile, settings, saved contacts, and local chat history.</p>
+                <button id="export-backup-btn" type="button" class="btn btn-primary btn-sm gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download Backup (JSON)
+                </button>
+            </div>
+
+            <!-- Import Backup Card -->
+            <div class="card bg-base-200 p-3 border border-base-300">
+                <h4 class="text-xs font-bold uppercase tracking-wider mb-1 text-base-content/80">Import Backup</h4>
+                <p class="text-[11px] text-base-content/60 mb-2">Restore your profile, contacts, and chat history from a previous JSON backup file.</p>
+                <div class="flex flex-col gap-2">
+                    <input type="file" id="import-backup-file" accept=".json,application/json" class="file-input file-input-bordered file-input-xs w-full" />
+                    <button id="import-backup-btn" type="button" class="btn btn-secondary btn-outline btn-sm gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        Restore From File
+                    </button>
+                </div>
+            </div>
+
+            <!-- Online Sync Action -->
+            <div class="card bg-base-200 p-3 border border-base-300 flex flex-row items-center justify-between">
+                <div>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-base-content/80">Sync When Online</h4>
+                    <p class="text-[11px] text-base-content/60">Auto-syncs missed messages on reconnect.</p>
+                </div>
+                <button id="modal-sync-btn" type="button" class="btn btn-neutral btn-sm gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-info" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Sync Now
+                </button>
+            </div>
+
+            <div class="modal-action">
+                <form method="dialog">
+                    <button class="btn btn-sm btn-ghost">Close</button>
+                </form>
             </div>
         </div>
         <form method="dialog" class="modal-backdrop">
@@ -360,7 +486,37 @@
         </form>
     </dialog>
 
-    <!-- 4. Toast Notification Stack -->
+    <!-- 4. Universal Media Lightbox Modal (Images & Videos) -->
+    <dialog id="media-modal" class="modal">
+        <div class="modal-box max-w-4xl p-3 bg-base-300">
+            <div class="flex items-center justify-between p-1 pb-2 border-b border-base-content/10">
+                <div class="flex items-center gap-2 truncate">
+                    <span id="media-modal-badge" class="badge badge-primary badge-xs uppercase font-mono">Media</span>
+                    <span id="media-modal-title" class="text-xs font-semibold truncate max-w-xs md:max-w-md">Attachment</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <a id="media-modal-download" href="#" download="" class="btn btn-ghost btn-xs gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Save
+                    </a>
+                    <form method="dialog">
+                        <button id="media-modal-close-btn" class="btn btn-circle btn-xs btn-ghost">✕</button>
+                    </form>
+                </div>
+            </div>
+            <div class="flex items-center justify-center p-2 min-h-[220px]">
+                <img id="modal-image-preview" src="" alt="Shared attachment" class="max-h-[75vh] rounded-lg object-contain hidden" />
+                <video id="modal-video-preview" controls playsinline class="max-h-[75vh] rounded-lg object-contain w-full hidden"></video>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
+    <!-- 5. Toast Notification Stack -->
     <div id="toast-container" class="toast toast-bottom toast-end z-50 pointer-events-none"></div>
 </body>
 
